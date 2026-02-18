@@ -8,7 +8,6 @@ set -euo pipefail
 
 # Configuration - set these environment variables or edit here
 DEVELOPER_ID="${DEVELOPER_ID:-}"  # e.g., "Developer ID Application: Your Name (TEAMID)"
-APPLE_ID="${APPLE_ID:-}"          # e.g., "you@example.com"
 TEAM_ID="${TEAM_ID:-}"            # e.g., "ABCD1234"
 KEYCHAIN_PROFILE="${KEYCHAIN_PROFILE:-notarytool}"  # stored credentials profile
 
@@ -57,7 +56,6 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Environment variables:"
             echo "  DEVELOPER_ID      Developer ID certificate name"
-            echo "  APPLE_ID          Apple ID email for notarization"
             echo "  TEAM_ID           Apple Developer Team ID"
             echo "  KEYCHAIN_PROFILE  notarytool stored credentials profile"
             exit 0

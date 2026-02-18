@@ -13,12 +13,10 @@ PLUGIN_DIR="$PROJECT_ROOT/$PLUGIN_NAME"
 MODULES_DIR="$HOME/Library/Application Support/Adobe/Lightroom/Modules"
 
 # Colors for output
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
 log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Build release binary and install to plugin
 log_info "Building release binary..."
