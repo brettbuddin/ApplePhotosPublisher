@@ -9,7 +9,10 @@ I use this plugin to manage edits I want to shared with family and so I can see 
 ## Installation
 
 ```sh
-./script/install.sh
+; git clone https://github.com/brettbuddin/ApplePhotosPublisher.git
+; cd ApplePhotosPublisher
+; git switch --detach v1.0.0
+; script/install.sh
 ```
 
 This builds a universal binary (arm64 + x86_64) and installs the plugin to Lightroom Classic. Grant Photos access when prompted on first publish.
