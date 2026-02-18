@@ -1,0 +1,16 @@
+excluded:
+  - .build
+
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - modifier_order
+  - overridden_super_call
+  - private_action
+  - private_outlet
+  - toggle_bool
+  - trailing_comma
+  - unneeded_parentheses_in_closure_argument
+  - vertical_whitespace_closing_braces

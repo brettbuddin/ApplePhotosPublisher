@@ -1,0 +1,11 @@
+{
+    "diagnostics.globals": [
+        "import",
+        "_PLUGIN",
+        "_G"
+    ],
+    "runtime.version": "Lua 5.1",
+    "workspace.ignoreDir": [
+        "tmp"
+    ]
+}

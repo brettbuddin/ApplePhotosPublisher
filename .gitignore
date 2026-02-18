@@ -1,0 +1,21 @@
+# Claude Code
+.claude/settings.local.json
+.claude/todos.json
+CLAUDE.local.md
+
+# Swift
+importer/.build/
+.swiftpm/
+
+# Release artifacts
+tmp/
+ApplePhotosPublisher.lrplugin/bin/
+
+# macOS
+.DS_Store
+
+# Notes
+docs/notes/
+
+# Lightroom Classic SDK
+LrC_*/
