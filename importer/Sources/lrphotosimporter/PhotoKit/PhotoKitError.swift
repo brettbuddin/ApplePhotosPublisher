@@ -23,6 +23,7 @@ enum PhotoKitError: Error, LocalizedError, Sendable {
     /// Add to album failed
     case addToAlbumFailed(assetID: String, albumID: String, reason: String)
 
+    /// A human-readable description of the error, conforming to `LocalizedError`.
     var errorDescription: String? {
         switch self {
         case .readAuthorizationDenied:

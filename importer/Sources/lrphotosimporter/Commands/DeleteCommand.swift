@@ -1,6 +1,10 @@
 import ArgumentParser
 import Foundation
 
+/// Command that deletes one or more photos from the Apple Photos library by their local identifiers.
+///
+/// Outputs an XML result to stdout indicating success or failure, suitable for parsing
+/// by the Lightroom plugin.
 struct DeleteCommand: AsyncParsableCommand {
     static var configuration = CommandConfiguration(
         commandName: "delete",
@@ -10,6 +14,7 @@ struct DeleteCommand: AsyncParsableCommand {
     @Argument(help: "Local identifiers of photos to delete")
     var identifiers: [String]
 
+    /// Validates identifiers, ensures Photos library write access, and performs the deletion.
     mutating func run() async {
         guard !identifiers.isEmpty else {
             print(XMLOutput.deleteError(code: "NO_IDENTIFIERS", message: "No identifiers provided"))
@@ -32,6 +37,11 @@ struct DeleteCommand: AsyncParsableCommand {
         print(await performDelete(photoKit: photoKit, identifiers: identifiers))
     }
 
+    /// Performs the delete operation against the given photo library.
+    /// - Parameters:
+    ///   - photoKit: The photo library to delete assets from.
+    ///   - identifiers: Local identifiers of the assets to delete.
+    /// - Returns: An XML string describing the result of the deletion.
     func performDelete(photoKit: any PhotoLibrary, identifiers: [String]) async -> String {
         do {
             try await photoKit.deleteAssets(identifiers: identifiers)

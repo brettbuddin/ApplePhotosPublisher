@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import lrphotosimporter
 
+/// Tests for ``ImportCommand`` including single photo import and manifest parsing.
 @Suite("ImportCommand")
 struct ImportTests {
 

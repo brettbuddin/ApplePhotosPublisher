@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import lrphotosimporter
 
+/// Tests for ``XMLOutput`` XML generation methods.
 @Suite("XMLOutput")
 struct XMLOutputTests {
 

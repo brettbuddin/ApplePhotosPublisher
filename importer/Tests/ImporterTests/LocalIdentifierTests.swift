@@ -1,6 +1,7 @@
 import Testing
 @testable import lrphotosimporter
 
+/// Tests for the ``String/uuidPrefix`` computed property.
 @Suite("String.uuidPrefix")
 struct LocalIdentifierTests {
 

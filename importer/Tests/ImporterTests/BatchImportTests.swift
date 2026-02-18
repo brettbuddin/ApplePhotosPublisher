@@ -2,9 +2,11 @@ import Foundation
 import Testing
 @testable import lrphotosimporter
 
+/// Tests for the batch import workflow in ``ImportCommand/executeBatchImport(photoKit:photos:)``.
 @Suite("BatchImport")
 struct BatchImportTests {
 
+    /// Parses an XML result string and returns the root element.
     private func parseResult(_ xml: String) throws -> XMLElement {
         let doc = try XMLDocument(xmlString: xml)
         return try #require(doc.rootElement())

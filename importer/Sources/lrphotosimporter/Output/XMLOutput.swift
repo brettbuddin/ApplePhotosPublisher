@@ -1,15 +1,37 @@
 import Foundation
 
-/// Represents the result of importing a single photo in a batch
+/// Represents the result of importing a single photo in a batch.
+///
+/// Use the ``success(path:localIdentifier:albumsRestored:favoriteRestored:)`` and
+/// ``error(path:code:message:)`` factory methods to create instances.
 struct SingleImportResult {
+    /// The file path of the photo that was imported (or attempted).
     let path: String
+
+    /// `"success"` or `"error"` indicating the outcome.
     let status: String
+
+    /// The Photos library local identifier of the newly created asset, or `nil` on error.
     let localIdentifier: String?
+
+    /// Albums whose membership was restored from the previous version of the photo.
     let albumsRestored: [AlbumMembership]
+
+    /// Whether the favorite status was successfully restored from the previous version.
     let favoriteRestored: Bool
+
+    /// A machine-readable error code, or `nil` on success.
     let errorCode: String?
+
+    /// A human-readable error message, or `nil` on success.
     let errorMessage: String?
 
+    /// Creates a successful import result.
+    /// - Parameters:
+    ///   - path: The file path of the imported photo.
+    ///   - localIdentifier: The Photos library local identifier of the new asset.
+    ///   - albumsRestored: Albums whose membership was restored.
+    ///   - favoriteRestored: Whether the favorite flag was restored.
     static func success(
         path: String,
         localIdentifier: String,
@@ -27,6 +49,11 @@ struct SingleImportResult {
         )
     }
 
+    /// Creates a failed import result.
+    /// - Parameters:
+    ///   - path: The file path of the photo that failed to import.
+    ///   - code: A machine-readable error code.
+    ///   - message: A human-readable error description.
     static func error(path: String, code: String, message: String) -> SingleImportResult {
         SingleImportResult(
             path: path,
@@ -40,12 +67,19 @@ struct SingleImportResult {
     }
 }
 
-/// Generates XML output for importer responses
+/// Generates XML output strings for all importer command responses.
+///
+/// All output follows the same pattern: an XML document with a UTF-8 declaration
+/// and pretty-printed formatting, suitable for parsing by the Lightroom plugin.
 enum XMLOutput {
 
     // MARK: - Batch Import Results
 
-    /// Generate XML for batch import results
+    /// Generates XML for a batch import result containing per-photo outcomes.
+    /// - Parameters:
+    ///   - results: The individual import results for each photo in the batch.
+    ///   - albumUuid: The User Library album UUID used to construct deep-link URLs, or `nil`.
+    /// - Returns: A complete XML document string.
     static func batchImportResult(results: [SingleImportResult], albumUuid: String?) -> String {
         let root = XMLElement(name: "batchImportResult")
         root.addChild(XMLElement(name: "status", stringValue: "success"))
@@ -99,7 +133,11 @@ enum XMLOutput {
         return xmlString(from: root)
     }
 
-    /// Generate XML for batch import error (fatal error before processing)
+    /// Generates XML for a fatal batch import error that prevented processing.
+    /// - Parameters:
+    ///   - code: A machine-readable error code (e.g. `"AUTH_ERROR"`).
+    ///   - message: A human-readable error description.
+    /// - Returns: A complete XML document string.
     static func batchImportError(code: String, message: String) -> String {
         let root = XMLElement(name: "batchImportResult")
         root.addChild(XMLElement(name: "status", stringValue: "error"))
@@ -110,7 +148,9 @@ enum XMLOutput {
 
     // MARK: - Delete Results
 
-    /// Generate XML for successful delete
+    /// Generates XML for a successful delete operation.
+    /// - Parameter deletedCount: The number of assets that were deleted.
+    /// - Returns: A complete XML document string.
     static func deleteSuccess(deletedCount: Int) -> String {
         let root = XMLElement(name: "deleteResult")
         root.addChild(XMLElement(name: "status", stringValue: "success"))
@@ -118,7 +158,11 @@ enum XMLOutput {
         return xmlString(from: root)
     }
 
-    /// Generate XML for delete error
+    /// Generates XML for a failed delete operation.
+    /// - Parameters:
+    ///   - code: A machine-readable error code (e.g. `"DELETE_FAILED"`).
+    ///   - message: A human-readable error description.
+    /// - Returns: A complete XML document string.
     static func deleteError(code: String, message: String) -> String {
         let root = XMLElement(name: "deleteResult")
         root.addChild(XMLElement(name: "status", stringValue: "error"))
@@ -129,6 +173,9 @@ enum XMLOutput {
 
     // MARK: - Helpers
 
+    /// Wraps an XML element in a document with version and encoding declarations.
+    /// - Parameter root: The root element for the XML document.
+    /// - Returns: A pretty-printed XML string with a trailing newline.
     private static func xmlString(from root: XMLElement) -> String {
         let doc = XMLDocument(rootElement: root)
         doc.version = "1.0"

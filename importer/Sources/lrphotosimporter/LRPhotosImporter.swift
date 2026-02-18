@@ -1,6 +1,11 @@
 import ArgumentParser
 import Foundation
 
+/// Main entry point for the LRPhotosImporter command-line tool.
+///
+/// This tool is designed to be invoked by a Lightroom Classic publish service plugin
+/// to import, delete, and open photos in the Apple Photos library. It exposes three
+/// subcommands: `import`, `delete`, and `open`.
 @main
 struct LRPhotosImporter: AsyncParsableCommand {
     static var configuration = CommandConfiguration(

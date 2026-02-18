@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import lrphotosimporter
 
+/// Tests for ``DeleteCommand/performDelete(photoKit:identifiers:)``.
 @Suite("DeleteCommand")
 struct DeleteTests {
 

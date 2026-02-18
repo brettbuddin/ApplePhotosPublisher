@@ -3,6 +3,10 @@ import AppKit
 import Foundation
 import Photos
 
+/// Command that opens a photo in the Apple Photos app by its local identifier.
+///
+/// Constructs a `photos:` URL using the asset's UUID and the User Library album UUID,
+/// then opens it via `NSWorkspace`, causing Apple Photos to navigate to the photo.
 struct OpenCommand: ParsableCommand {
     static var configuration = CommandConfiguration(
         commandName: "open",
@@ -12,6 +16,7 @@ struct OpenCommand: ParsableCommand {
     @Argument(help: "Local identifier of the photo to open")
     var identifier: String
 
+    /// Fetches the User Library album, constructs a deep-link URL, and opens it in Apple Photos.
     mutating func run() {
         // Get the User Library smart album for the URL
         let albums = PHAssetCollection.fetchAssetCollections(

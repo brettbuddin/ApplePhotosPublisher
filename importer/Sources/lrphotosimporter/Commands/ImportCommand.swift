@@ -1,12 +1,27 @@
 import ArgumentParser
 import Foundation
 
-/// Manifest entry for batch import
+/// A single entry from the batch import manifest file.
+///
+/// Each entry represents a photo to import, optionally referencing a previously
+/// published photo whose album memberships and favorite status should be preserved.
 struct ManifestPhoto {
+    /// File system path to the rendered photo to import.
     let path: String
+
+    /// Local identifier of the previously published version of this photo, if any.
+    ///
+    /// When present, the import process will copy album memberships and favorite
+    /// status from the previous asset to the newly imported one.
     let previousIdentifier: String?
 }
 
+/// Command that imports photos into Apple Photos from an XML manifest file.
+///
+/// Reads a manifest listing photo file paths and optional previous identifiers,
+/// then imports each photo into the Photos library. When a previous identifier is
+/// provided, album memberships and favorite status are preserved on the new asset.
+/// Results are output as XML to stdout.
 struct ImportCommand: AsyncParsableCommand {
     static var configuration = CommandConfiguration(
         commandName: "import",
@@ -16,12 +31,17 @@ struct ImportCommand: AsyncParsableCommand {
     @Option(name: .customLong("manifest"), help: "Path to XML manifest file for batch import")
     var manifestPath: String
 
+    /// Entry point that reads the manifest and runs the batch import.
     mutating func run() async {
         await runBatchImport(manifestPath: manifestPath)
     }
 
     // MARK: - Batch Import
 
+    /// Parses an XML manifest document into an array of ``ManifestPhoto`` entries.
+    /// - Parameter doc: The parsed XML document with a `<manifest>` root element.
+    /// - Returns: An array of photos extracted from the manifest.
+    /// - Throws: An error if the root element is missing or not named `manifest`.
     func parseManifestXML(_ doc: XMLDocument) throws -> [ManifestPhoto] {
         var photos: [ManifestPhoto] = []
 
@@ -51,6 +71,8 @@ struct ImportCommand: AsyncParsableCommand {
         return photos
     }
 
+    /// Reads and parses the manifest file, then performs the batch import.
+    /// - Parameter manifestPath: File system path to the XML manifest.
     private func runBatchImport(manifestPath: String) async {
         // Read and parse manifest
         let manifestURL = URL(fileURLWithPath: manifestPath)
@@ -107,6 +129,18 @@ struct ImportCommand: AsyncParsableCommand {
         return XMLOutput.batchImportResult(results: results, albumUuid: albumUuid)
     }
 
+    /// Imports a single photo, optionally preserving metadata from a previous version.
+    ///
+    /// If `previousIdentifier` is provided, album memberships and favorite status are
+    /// fetched from the previous asset and restored on the newly imported photo.
+    /// Failures during metadata restoration are logged to stderr but do not cause
+    /// the overall import to fail.
+    ///
+    /// - Parameters:
+    ///   - photoKit: The photo library to import into.
+    ///   - path: File system path to the photo file.
+    ///   - previousIdentifier: Optional local identifier of a previously published version.
+    /// - Returns: A ``SingleImportResult`` describing the outcome.
     func importSinglePhoto(
         photoKit: any PhotoLibrary, path: String, previousIdentifier: String?
     ) async -> SingleImportResult {
