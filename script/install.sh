@@ -27,8 +27,7 @@ log_info "Building release binary..."
 # Copy plugin to Lightroom Modules
 log_info "Installing plugin to Lightroom Classic..."
 mkdir -p "$MODULES_DIR"
-rm -rf "$MODULES_DIR/$PLUGIN_NAME"
-cp -R "$PLUGIN_DIR" "$MODULES_DIR/$PLUGIN_NAME"
+rm -rf "${MODULES_DIR:?}/${PLUGIN_NAME:?}"
+cp -R "$PLUGIN_DIR" "${MODULES_DIR:?}/${PLUGIN_NAME:?}"
 log_info "Installed to: $MODULES_DIR/$PLUGIN_NAME"
-
 log_info "Installation complete. Restart Lightroom Classic if it is running."
