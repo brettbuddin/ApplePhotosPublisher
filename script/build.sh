@@ -39,12 +39,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         --help|-h)
             echo "Usage: $0 [options]"
-            echo ""
+            echo
             echo "Options:"
             echo "  --release    Build release configuration (default: debug)"
             echo "  --install    Copy binary to plugin after building"
             echo "  -h, --help   Show this help"
-            echo ""
+            echo
             echo "Examples:"
             echo "  $0                    # Debug build"
             echo "  $0 --release          # Release build"
@@ -98,6 +98,6 @@ fi
 # -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
-echo ""
+echo
 log_info "Build complete ($BUILD_CONFIG)"
 echo "  Binary: $BINARY_PATH"

@@ -10,6 +10,8 @@ importer/.build/
 # Release artifacts
 tmp/
 ApplePhotosPublisher.lrplugin/bin/
+ApplePhotosPublisher.lrplugin/BuildInfo.lua
+importer/Sources/lrphotosimporter/BuildInfo.swift
 
 # macOS
 .DS_Store
