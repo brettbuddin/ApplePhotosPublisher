@@ -12,23 +12,33 @@ local Importer = pluginLoad 'lib/Importer'
 local Time = pluginLoad 'lib/Time'
 local logger = pluginLoad 'lib/Logger'
 
+--- Plugin metadata key for the Apple Photos localIdentifier.
 local PROP_LOCAL_IDENTIFIER = 'photosLocalIdentifier'
+--- Plugin metadata key for the last sync timestamp.
 local PROP_SYNC_DATE = 'photosSyncDate'
 
+--- Lightroom publish/export service provider table.
+--- @class PhotosServiceProvider
 local provider = {}
 
+--- Render to a temporary location; Lightroom manages cleanup.
 provider.canExportToTemporaryLocation = true
+--- Only incremental (change-tracked) publishing is supported.
 provider.supportsIncrementalPublish = 'only'
+--- Hide irrelevant export dialog sections (location, naming, post-processing).
 provider.hideSections = {
     'exportLocation',
     'fileNaming',
     'postProcessing',
 }
+--- Only JPEG output is supported.
 provider.allowFileFormats = { 'JPEG' }
-
--- Allow any color space by emptying allowed color spaces.
+--- Allow any color space (nil removes the restriction).
 provider.allowColorSpaces = nil
 
+--- Called when the publish/export dialog opens.
+--- Sets default export properties for Apple Photos output.
+--- @param propertyTable table Lightroom export property table
 function provider.startDialog(propertyTable)
     propertyTable.LR_jpeg_quality = 1
     propertyTable.LR_size_doConstrain = false
@@ -40,6 +50,11 @@ function provider.startDialog(propertyTable)
     propertyTable.LR_useWatermark = false
 end
 
+--- Returns UI sections displayed at the top of the publish/export dialog.
+--- Shows a single "Apple Photos" section with a description of the service.
+--- @param f table Lightroom view factory
+--- @param propertyTable table Lightroom export property table
+--- @return table Array of dialog section descriptors
 function provider.sectionsForTopOfDialog(f, propertyTable)
     return {
         {
@@ -54,6 +69,11 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
     }
 end
 
+--- Configures collection behavior for the publish service.
+--- Creates a non-deletable default collection named "Apple Photos".
+--- Users can add collections but not collection sets (depth 0).
+--- @param publishSettings table Current publish settings
+--- @return table Collection behavior configuration
 function provider.getCollectionBehaviorInfo(publishSettings)
     return {
         defaultCollectionName = 'Apple Photos',
@@ -63,6 +83,11 @@ function provider.getCollectionBehaviorInfo(publishSettings)
     }
 end
 
+--- Declares which metadata changes should mark a photo for republish.
+--- Triggers on: title, caption, keywords, GPS, date created, rating.
+--- All other metadata fields are ignored.
+--- @param publishSettings table Current publish settings
+--- @return table Map of metadata field names to boolean
 function provider.metadataThatTriggersRepublish(publishSettings)
     return {
         default = false,
@@ -75,6 +100,14 @@ function provider.metadataThatTriggersRepublish(publishSettings)
     }
 end
 
+--- Batch-imports rendered photos into Apple Photos.
+--- For each successful import, stores the Photos identifier and sync timestamp
+--- as plugin metadata, records the published photo ID/URL on the rendition,
+--- and collects previous identifiers for later cleanup.
+--- @param progressScope LrProgressScope Active progress scope for cancellation and status
+--- @param renditionPhotos table Array of {rendition, photo, path, previousIdentifier}
+--- @param catalog LrCatalog The active Lightroom catalog
+--- @return table Array of old Apple Photos identifiers that were replaced
 local function importPhotoBatch(progressScope, renditionPhotos, catalog)
     local batchPhotos = {}
     for _, rp in ipairs(renditionPhotos) do
@@ -132,6 +165,10 @@ local function importPhotoBatch(progressScope, renditionPhotos, catalog)
     return oldIdentifiers
 end
 
+--- Deletes previously-published photo versions from Apple Photos.
+--- Called after a batch import to clean up photos that were replaced.
+--- @param progressScope LrProgressScope Active progress scope for status updates
+--- @param oldIdentifiers table Array of Apple Photos local identifiers to delete
 local function deleteOldVersions(progressScope, oldIdentifiers)
     if #oldIdentifiers == 0 then
         return
@@ -148,6 +185,12 @@ local function deleteOldVersions(progressScope, oldIdentifiers)
     end
 end
 
+--- Main publish entry point called by Lightroom after photos are rendered.
+--- Waits for each rendition to finish rendering, collects successful results
+--- with their file paths and previous identifiers, batch-imports them into
+--- Apple Photos, then deletes any old versions that were replaced.
+--- @param functionContext LrFunctionContext Lightroom function context for cleanup
+--- @param exportContext LrExportContext Context providing renditions and progress
 function provider.processRenderedPhotos(functionContext, exportContext)
     local nPhotos = exportContext.exportSession:countRenditions()
     local progressScope = exportContext:configureProgress({
@@ -192,6 +235,14 @@ function provider.processRenderedPhotos(functionContext, exportContext)
     progressScope:done()
 end
 
+--- Called when the user removes photos from a published collection.
+--- Deletes the photos from Apple Photos, clears plugin metadata
+--- (photosLocalIdentifier and photosSyncDate) from the catalog, and
+--- notifies Lightroom of each successful deletion via deletedCallback.
+--- @param publishSettings table Current publish settings
+--- @param photoIDs table Array of Apple Photos local identifiers to delete
+--- @param deletedCallback function Called with each photoID after successful deletion
+--- @param localCollectionID number Lightroom local identifier for the published collection
 function provider.deletePhotosFromPublishedCollection(publishSettings, photoIDs, deletedCallback,
                                                       localCollectionID)
     if #photoIDs == 0 then
