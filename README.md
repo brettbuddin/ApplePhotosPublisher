@@ -35,3 +35,7 @@ When publishing, the plugin renders photos as full-quality JPEGs and imports the
 When republishing, album memberships and favorite status in Apple Photos are preserved and the old version is replaced. Changes to title, caption, keywords, GPS, date, or rating will mark a photo for republish.
 
 Removing a photo from the publish collection deletes it from Apple Photos.
+
+### Delete Confirmation Dialog
+
+When removing or republishing photos, macOS will present a system confirmation dialog asking permission to delete from Apple Photos. This is a PhotoKit requirement enforced by Apple; apps cannot silently delete photos from the user's library. The dialog is expected and unavoidable.
