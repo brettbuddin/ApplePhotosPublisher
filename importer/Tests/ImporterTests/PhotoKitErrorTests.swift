@@ -21,6 +21,8 @@ struct PhotoKitErrorTests {
         let message = try #require(error.errorDescription)
         #expect(message.contains("System Settings"))
         #expect(message.contains("Full Access"))
+        #expect(message.contains("set Apple Photos Publisher for Lightroom Classic to Full Access"))
+        #expect(!message.contains("set Lightroom Classic"))
     }
 
     /// Restricted access cannot be changed by the user, so no System Settings remedy is offered.

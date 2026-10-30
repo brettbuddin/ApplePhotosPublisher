@@ -1,7 +1,7 @@
 --[[
     Importer
 
-    Wrapper for the lrphotosimporter binary. Provides functions to:
+    Wrapper for the Apple Photos Publisher for Lightroom Classic helper app. Provides functions to:
       - Import multiple photos in a batch
       - Delete photos from Apple Photos by identifier
 
@@ -69,10 +69,8 @@ end
 ---
 --- On macOS, LrTasks.execute returns the raw wait status from system(3)
 --- rather than a plain exit code. The command runs under /bin/sh, so the
---- status normally encodes the shell's exit code in the high byte. When the
---- importer dies from a signal, the shell reports 128 + signal as its exit
---- code, so a crash shows up as a value such as 34304 (134 << 8, SIGABRT).
---- If the shell itself is killed, the signal number sits in the low byte.
+--- status normally encodes the shell's exit code in the high byte. This is
+--- only the launcher's status; helper signals come from the monitor record.
 ---
 --- @param status number The raw status from LrTasks.execute
 --- @return string A description such as "exit code 1" or "killed by signal 6 (SIGABRT)"
@@ -90,10 +88,7 @@ local function describeExitStatus(status)
     end
 
     local exitCode = high
-    if exitCode > 128 and exitCode < 160 then
-        return 'exit code ' .. tostring(exitCode)
-            .. ', killed by signal ' .. describeSignal(exitCode - 128)
-    elseif exitCode == 126 then
+    if exitCode == 126 then
         return 'exit code 126 (binary found but could not be executed)'
     elseif exitCode == 127 then
         return 'exit code 127 (binary not found)'
@@ -101,29 +96,57 @@ local function describeExitStatus(status)
     return 'exit code ' .. tostring(exitCode)
 end
 
---- Fill in a parse-error fallback when the XML parser returned no status
+--- Require a known, successful process exit before accepting success XML.
 --- @param result table The parsed result table (modified in place)
---- @param exitCode number The raw status returned by LrTasks.execute
+--- @param launchStatus number The raw status of the launcher, not the helper
 --- @param output string|nil The raw command output
-local function fillParseError(result, exitCode, output)
-    if result.status then return end
+--- @param diagnostics string The helper's stderr and launch errors
+--- @param termination table|nil The monitor's validated termination record
+local function checkProcessResult(result, launchStatus, output, diagnostics, termination)
+    local helper = 'Apple Photos Publisher for Lightroom Classic'
+    if termination and termination.state == 'signaled' then
+        result.errorCode = 'HELPER_CRASHED'
+        result.errorMessage = helper .. ' was killed by signal ' .. describeSignal(termination.signal)
+            .. ' (raw status ' .. tostring(termination.rawStatus) .. ').'
+    elseif termination and termination.state == 'exited' and termination.exitCode ~= 0 then
+        local detail = helper .. ' exited with code ' .. tostring(termination.exitCode)
+            .. ' (raw status ' .. tostring(termination.rawStatus) .. ').'
+        if result.status == STATUS_ERROR and result.errorMessage then
+            result.errorMessage = result.errorMessage .. '\n' .. detail
+        else
+            result.errorCode = 'HELPER_EXIT_FAILED'
+            result.errorMessage = detail
+        end
+    elseif termination and termination.state == 'exited' then
+        if result.status then return end
+        result.errorCode = 'PARSE_ERROR'
+        result.errorMessage = helper .. ' exited with code 0 but did not return valid XML.'
+    elseif termination and termination.state == 'startupFailed' then
+        result.errorCode = 'LAUNCH_FAILED'
+        result.errorMessage = helper .. ' failed before its startup handshake completed. '
+            .. 'The helper\'s exit status is unavailable.'
+    else
+        result.errorCode = 'MONITOR_FAILED'
+        result.errorMessage = 'Could not determine how ' .. helper .. ' terminated (launcher '
+            .. describeExitStatus(launchStatus) .. '). The operation may have completed; check Photos before retrying.'
+    end
     result.status = STATUS_ERROR
-    result.errorCode = 'PARSE_ERROR'
-    result.errorMessage = 'Failed to parse importer response ('
-        .. describeExitStatus(exitCode) .. ', raw status ' .. tostring(exitCode) .. ')'
     if output and output ~= '' then
         result.errorMessage = result.errorMessage .. '\nOutput: ' .. output
     else
         result.errorMessage = result.errorMessage .. '\nThe importer produced no output.'
     end
+    if diagnostics and diagnostics ~= '' then
+        result.errorMessage = result.errorMessage .. '\nDiagnostics: ' .. diagnostics
+    end
 end
 
---- Get the path to the importer binary
---- @return string Path to the lrphotosimporter binary
-local function getBinaryPath()
+--- Get the helper app that owns the Photos permission.
+--- @return string Path to the helper app
+local function getAppPath()
     local pluginPath = _PLUGIN.path
     local binDir = LrPathUtils.child(pluginPath, 'bin')
-    return LrPathUtils.child(binDir, 'lrphotosimporter')
+    return LrPathUtils.child(binDir, 'Apple Photos Publisher for Lightroom Classic.app')
 end
 
 --- Build manifest XML for a batch of photos
@@ -204,19 +227,20 @@ function M.importPhotos(photos)
     logger:info('Written manifest to: ' .. manifestPath)
     logger:info('Manifest contains ' .. #photos .. ' photos')
 
-    local binary = getBinaryPath()
-    local command = Shell.escape(binary) .. ' import --manifest ' .. Shell.escape(manifestPath)
-
-    logger:info('Running batch import command: ' .. command)
-
-    local exitCode, output = Shell.executeWithOutput(command)
+    local appPath = getAppPath()
+    logger:info('Launching batch import via Launch Services: ' .. appPath)
+    local launchStatus, output, diagnostics, termination = Shell.executeAppWithOutput(
+        appPath, { 'import', '--manifest', manifestPath })
     LrFileUtils.delete(manifestPath)
+    if diagnostics and diagnostics ~= '' then
+        logger:info('Batch import diagnostics:\n' .. diagnostics)
+    end
     if output and output ~= '' then
         logger:info('Batch import output:\n' .. output)
     end
 
     local result = XML.parseBatchImportResult(output or '')
-    fillParseError(result, exitCode, output)
+    checkProcessResult(result, launchStatus, output, diagnostics, termination)
     return result
 end
 
@@ -236,20 +260,23 @@ function M.deletePhotos(identifiers)
         }
     end
 
-    local binary = getBinaryPath()
-    local command = Shell.escape(binary) .. ' delete'
+    local appPath = getAppPath()
+    local arguments = { 'delete' }
     for _, id in ipairs(identifiers) do
-        command = command .. ' ' .. Shell.escape(id)
+        table.insert(arguments, id)
     end
-    logger:info('Running delete command: ' .. command)
+    logger:info('Launching delete via Launch Services: ' .. appPath)
 
-    local exitCode, output = Shell.executeWithOutput(command)
+    local launchStatus, output, diagnostics, termination = Shell.executeAppWithOutput(appPath, arguments)
+    if diagnostics and diagnostics ~= '' then
+        logger:info('Delete diagnostics:\n' .. diagnostics)
+    end
     if output and output ~= '' then
         logger:info('Delete output:\n' .. output)
     end
 
     local result = XML.parseDeleteResult(output or '')
-    fillParseError(result, exitCode, output)
+    checkProcessResult(result, launchStatus, output, diagnostics, termination)
     return result
 end
 

@@ -20,7 +20,7 @@ local PROP_LOCAL_IDENTIFIER = 'photosLocalIdentifier'
 local PROP_SYNC_DATE = 'photosSyncDate'
 
 --- Title of the dialog shown when Photos library access is missing.
-local AUTHORIZATION_DIALOG_TITLE = 'Lightroom Classic needs Full Access to Photos'
+local AUTHORIZATION_DIALOG_TITLE = 'Apple Photos Publisher for Lightroom Classic needs Full Access to Photos'
 
 --- Tell the user that Photos library access is missing and how to fix it.
 --- The importer's message names the current setting (Limited Access, no

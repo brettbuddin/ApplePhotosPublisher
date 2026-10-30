@@ -93,9 +93,10 @@ fi
 if [[ "$INSTALL_TO_PLUGIN" == true ]]; then
     log_info "Installing binary to plugin..."
     mkdir -p "$PLUGIN_DIR/bin"
-    cp "$BINARY_PATH" "$PLUGIN_DIR/bin/"
-    chmod +x "$PLUGIN_DIR/bin/$BINARY_NAME"
-    log_info "Installed to: $PLUGIN_DIR/bin/$BINARY_NAME"
+    bash "$SCRIPT_DIR/package-helper.sh" "$BINARY_PATH" "$PLUGIN_DIR/bin/Apple Photos Publisher for Lightroom Classic.app"
+    rm -f "$PLUGIN_DIR/bin/$BINARY_NAME"
+    rm -rf "${PLUGIN_DIR:?}/bin/Apple Photos Publisher.app"
+    log_info "Installed to: $PLUGIN_DIR/bin/Apple Photos Publisher for Lightroom Classic.app"
 fi
 
 # -----------------------------------------------------------------------------

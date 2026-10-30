@@ -29,11 +29,9 @@ enum PhotoKitError: Error, LocalizedError, Sendable {
     /// Add to album failed
     case addToAlbumFailed(assetID: String, albumID: String, reason: String)
 
-    /// How the user can change the Photos permission. macOS records the grant
-    /// against the responsible process, which is Lightroom Classic when the
-    /// plugin launches this tool, so that is the row they need to change.
+    /// Launch Services gives the helper its own Photos permission in Settings.
     private static let fullAccessRemedy = "Open System Settings > Privacy & Security > Photos, "
-        + "set Lightroom Classic to Full Access, then quit and reopen Lightroom Classic."
+        + "set Apple Photos Publisher for Lightroom Classic to Full Access, then retry publishing in Lightroom Classic."
 
     /// A human-readable description of the error, conforming to `LocalizedError`.
     var errorDescription: String? {
@@ -41,14 +39,14 @@ enum PhotoKitError: Error, LocalizedError, Sendable {
         case .readAuthorizationDenied:
             return "Photos library read access not authorized"
         case .writeAuthorizationDenied:
-            return "Lightroom Classic does not have Full Access to your Photos library. "
+            return "Apple Photos Publisher for Lightroom Classic does not have Full Access to your Photos library. "
                 + Self.fullAccessRemedy
         case .writeAuthorizationLimited:
-            return "Lightroom Classic has Limited Access to your Photos library, but Apple Photos Publisher "
+            return "Apple Photos Publisher for Lightroom Classic has Limited Access to your Photos library, but "
                 + "requires Full Access to replace published photos and preserve album memberships. " + Self.fullAccessRemedy
         case .writeAuthorizationRestricted:
             return "Access to the Photos library is restricted on this Mac, for example by "
-                + "Screen Time or a management profile, so it cannot be granted to Lightroom Classic."
+                + "Screen Time or a management profile, so it cannot be granted to Apple Photos Publisher for Lightroom Classic."
         case .assetNotFound(let id):
             return "Asset not found: \(id)"
         case .albumNotFound(let id):
