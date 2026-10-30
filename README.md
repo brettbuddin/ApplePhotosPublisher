@@ -38,17 +38,19 @@ Removing a photo from the publish collection deletes it from Apple Photos.
 
 ### Photos Library Access
 
-The first time you publish, macOS asks whether Lightroom Classic may access your Photos library. Choose **Full Access**. The plugin requires access to previously published photos and their albums so it can replace photos and preserve album memberships.
+The first time you publish, macOS asks whether **Apple Photos Publisher for Lightroom Classic** may access your Photos library. Choose **Full Access**. The plugin's bundled helper app owns this permission. It requires access to previously published photos and their albums so it can replace photos and preserve album memberships.
 
-macOS only asks once. If you chose Limited Access or Don't Allow, publishing fails with a dialog explaining the fix: open System Settings > Privacy & Security > Photos, set Lightroom Classic to Full Access, then quit and reopen Lightroom Classic.
+macOS only asks once. If you chose Limited Access or Don't Allow, publishing fails with a dialog explaining the fix: open System Settings > Privacy & Security > Photos, set **Apple Photos Publisher for Lightroom Classic** to Full Access, then retry publishing in Lightroom Classic.
 
-If Lightroom Classic is missing from the Photos list, quit Lightroom and run this in Terminal to reset only its Photos permission:
+To repeat the permission prompt, wait for any publish operation to finish, quit Lightroom, and run this in Terminal to reset only the helper's Photos permission:
 
 ```sh
-tccutil reset Photos com.adobe.LightroomClassicCC7
+tccutil reset Photos org.buddin.lrphotossync.lrphotosimporter
 ```
 
-Reopen Lightroom and publish a photo through Apple Photos Publisher to trigger a new request, then choose **Full Access**. The reset does not grant access itself. If no prompt appears, check the plugin log at `~/Library/Logs/Adobe/Lightroom/LrClassicLogs/ApplePhotosPublisher.log` for an importer failure; resetting permissions cannot fix a helper that fails before requesting access.
+Reopen Lightroom and publish a photo through Apple Photos Publisher to trigger a new request, then choose **Full Access**. The reset does not grant access itself. If macOS reports that the bundle identifier is unknown, launch the helper by publishing once before trying the reset. If no prompt appears, check the plugin log at `~/Library/Logs/Adobe/Lightroom/LrClassicLogs/ApplePhotosPublisher.log` for an importer failure; resetting permissions cannot fix a helper that fails before requesting access.
+
+Older versions ran the importer directly under Lightroom. Any existing Lightroom Photos permission is separate from the helper's permission; the updated plugin may ask for access again.
 
 ### Delete Confirmation Dialog
 

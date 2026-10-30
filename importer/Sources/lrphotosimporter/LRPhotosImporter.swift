@@ -17,7 +17,7 @@ struct LRPhotosImporter: AsyncParsableCommand {
                 Supports single-photo and batch import modes.
                 Outputs XML to stdout for easy parsing.
                 """,
-            subcommands: [ImportCommand.self, DeleteCommand.self, OpenCommand.self]
+            subcommands: [ImportCommand.self, DeleteCommand.self, OpenCommand.self, AuthorizeCommand.self]
         )
         #if RELEASE_BUILD
         config.version = BuildInfo.version

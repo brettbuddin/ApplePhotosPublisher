@@ -1,7 +1,7 @@
 --[[
     Importer
 
-    Wrapper for the lrphotosimporter binary. Provides functions to:
+    Wrapper for the Apple Photos Publisher for Lightroom Classic helper app. Provides functions to:
       - Import multiple photos in a batch
       - Delete photos from Apple Photos by identifier
 
@@ -101,29 +101,41 @@ local function describeExitStatus(status)
     return 'exit code ' .. tostring(exitCode)
 end
 
---- Fill in a parse-error fallback when the XML parser returned no status
+--- Distinguish launch failures from helpers that exit without valid XML.
 --- @param result table The parsed result table (modified in place)
---- @param exitCode number The raw status returned by LrTasks.execute
+--- @param launchStatus number The raw status of open(1), not the helper's exit code
 --- @param output string|nil The raw command output
-local function fillParseError(result, exitCode, output)
+--- @param diagnostics string The helper's stderr and launch errors
+local function fillParseError(result, launchStatus, output, diagnostics)
+    -- open -W can fail to attach its exit watcher if the app finishes quickly
+    -- (kevent reports ESRCH). A complete XML result is the helper's outcome.
     if result.status then return end
     result.status = STATUS_ERROR
-    result.errorCode = 'PARSE_ERROR'
-    result.errorMessage = 'Failed to parse importer response ('
-        .. describeExitStatus(exitCode) .. ', raw status ' .. tostring(exitCode) .. ')'
+    if launchStatus ~= 0 then
+        result.errorCode = 'LAUNCH_FAILED'
+        result.errorMessage = 'Could not launch Apple Photos Publisher for Lightroom Classic ('
+            .. describeExitStatus(launchStatus) .. ', raw status ' .. tostring(launchStatus) .. ')'
+    else
+        result.errorCode = 'PARSE_ERROR'
+        result.errorMessage = 'Apple Photos Publisher for Lightroom Classic exited without a valid XML response. '
+            .. 'The helper may have crashed; check ~/Library/Logs/DiagnosticReports/lrphotosimporter*.ips.'
+    end
     if output and output ~= '' then
         result.errorMessage = result.errorMessage .. '\nOutput: ' .. output
     else
         result.errorMessage = result.errorMessage .. '\nThe importer produced no output.'
     end
+    if diagnostics and diagnostics ~= '' then
+        result.errorMessage = result.errorMessage .. '\nDiagnostics: ' .. diagnostics
+    end
 end
 
---- Get the path to the importer binary
---- @return string Path to the lrphotosimporter binary
-local function getBinaryPath()
+--- Get the helper app that owns the Photos permission.
+--- @return string Path to the helper app
+local function getAppPath()
     local pluginPath = _PLUGIN.path
     local binDir = LrPathUtils.child(pluginPath, 'bin')
-    return LrPathUtils.child(binDir, 'lrphotosimporter')
+    return LrPathUtils.child(binDir, 'Apple Photos Publisher for Lightroom Classic.app')
 end
 
 --- Build manifest XML for a batch of photos
@@ -204,19 +216,19 @@ function M.importPhotos(photos)
     logger:info('Written manifest to: ' .. manifestPath)
     logger:info('Manifest contains ' .. #photos .. ' photos')
 
-    local binary = getBinaryPath()
-    local command = Shell.escape(binary) .. ' import --manifest ' .. Shell.escape(manifestPath)
-
-    logger:info('Running batch import command: ' .. command)
-
-    local exitCode, output = Shell.executeWithOutput(command)
+    local appPath = getAppPath()
+    logger:info('Launching batch import via Launch Services: ' .. appPath)
+    local launchStatus, output, diagnostics = Shell.executeAppWithOutput(appPath, { 'import', '--manifest', manifestPath })
     LrFileUtils.delete(manifestPath)
+    if diagnostics and diagnostics ~= '' then
+        logger:info('Batch import diagnostics:\n' .. diagnostics)
+    end
     if output and output ~= '' then
         logger:info('Batch import output:\n' .. output)
     end
 
     local result = XML.parseBatchImportResult(output or '')
-    fillParseError(result, exitCode, output)
+    fillParseError(result, launchStatus, output, diagnostics)
     return result
 end
 
@@ -236,20 +248,23 @@ function M.deletePhotos(identifiers)
         }
     end
 
-    local binary = getBinaryPath()
-    local command = Shell.escape(binary) .. ' delete'
+    local appPath = getAppPath()
+    local arguments = { 'delete' }
     for _, id in ipairs(identifiers) do
-        command = command .. ' ' .. Shell.escape(id)
+        table.insert(arguments, id)
     end
-    logger:info('Running delete command: ' .. command)
+    logger:info('Launching delete via Launch Services: ' .. appPath)
 
-    local exitCode, output = Shell.executeWithOutput(command)
+    local launchStatus, output, diagnostics = Shell.executeAppWithOutput(appPath, arguments)
+    if diagnostics and diagnostics ~= '' then
+        logger:info('Delete diagnostics:\n' .. diagnostics)
+    end
     if output and output ~= '' then
         logger:info('Delete output:\n' .. output)
     end
 
     local result = XML.parseDeleteResult(output or '')
-    fillParseError(result, exitCode, output)
+    fillParseError(result, launchStatus, output, diagnostics)
     return result
 end
 

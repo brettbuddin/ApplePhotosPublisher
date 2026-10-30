@@ -23,9 +23,9 @@ let package = Package(
             ],
             exclude: ["Info.plist"],
             linkerSettings: [
-                // Embed Info.plist in the binary so the Photos usage description
-                // travels with the executable. PhotoKit reads it from the main
-                // bundle, and a bare command-line tool has no bundle of its own.
+                // Keep metadata available for direct CLI diagnostics as well.
+                // Lightroom must launch the packaged .app via Launch Services;
+                // embedding this alone does not establish a separate TCC identity.
                 .unsafeFlags([
                     "-Xlinker", "-sectcreate",
                     "-Xlinker", "__TEXT",

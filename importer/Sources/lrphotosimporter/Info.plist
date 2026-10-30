@@ -5,12 +5,20 @@
 	<key>CFBundleIdentifier</key>
 	<string>org.buddin.lrphotossync.lrphotosimporter</string>
 	<key>CFBundleName</key>
-	<string>lrphotosimporter</string>
+	<string>Apple Photos Publisher for Lightroom Classic</string>
+	<key>CFBundleDisplayName</key>
+	<string>Apple Photos Publisher for Lightroom Classic</string>
 	<key>CFBundleExecutable</key>
 	<string>lrphotosimporter</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleVersion</key>
+	<string>1.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>LSUIElement</key>
+	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Apple Photos Publisher imports photos published from Lightroom Classic into your Photos library and removes versions you unpublish.</string>
+	<string>This Lightroom Classic plugin publishes photos to your Photos library and removes versions you unpublish.</string>
 </dict>
 </plist>

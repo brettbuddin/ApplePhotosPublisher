@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo
             echo "Options:"
-            echo "  --skip-sign       Skip code signing (for local testing)"
+            echo "  --skip-sign       Use ad-hoc signing instead of Developer ID (local testing)"
             echo "  --skip-notarize   Skip notarization (still signs)"
             echo "  --install         Install plugin to Lightroom Classic"
             echo "  -h, --help        Show this help"
@@ -100,6 +100,9 @@ else
     LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
     VERSION="${LATEST_TAG}-${SHORT_SHA}"
 fi
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+    VERSION="${VERSION}-dirty"
+fi
 log_info "Building version: $VERSION"
 
 # -----------------------------------------------------------------------------
@@ -143,31 +146,39 @@ fi
 
 log_info "Binary built: $(file "$BINARY_PATH")"
 
+# Assemble before signing so the signature covers the helper's Info.plist.
+RELEASE_PLUGIN="$BUILD_DIR/$PLUGIN_NAME"
+cp -R "$PLUGIN_DIR" "$RELEASE_PLUGIN"
+rm -rf "${RELEASE_PLUGIN:?}/bin"
+HELPER_APP="$RELEASE_PLUGIN/bin/Apple Photos Publisher for Lightroom Classic.app"
+bash "$SCRIPT_DIR/package-helper.sh" "$BINARY_PATH" "$HELPER_APP"
+
 # -----------------------------------------------------------------------------
-# Sign the binary
+# Sign the helper app
 # -----------------------------------------------------------------------------
 if [[ "$SKIP_SIGN" == false ]]; then
-    log_info "Signing binary with Developer ID..."
+    log_info "Signing helper app with Developer ID..."
     codesign --force \
              --sign "$DEVELOPER_ID" \
              --options runtime \
+             --entitlements "$IMPORTER_DIR/Entitlements.plist" \
              --timestamp \
-             "$BINARY_PATH"
+             "$HELPER_APP"
 
     log_info "Verifying signature..."
-    codesign --verify --verbose "$BINARY_PATH"
+    codesign --verify --strict --verbose "$HELPER_APP"
 else
-    log_warn "Skipping code signing"
+    log_warn "Using the helper app's ad-hoc signature (local testing only)"
 fi
 
 # -----------------------------------------------------------------------------
-# Notarize the binary
+# Notarize the helper app
 # -----------------------------------------------------------------------------
 if [[ "$SKIP_NOTARIZE" == false ]]; then
-    log_info "Preparing binary for notarization..."
+    log_info "Preparing helper app for notarization..."
 
     NOTARIZE_ZIP="$BUILD_DIR/$BINARY_NAME-notarize.zip"
-    ditto -c -k --keepParent "$BINARY_PATH" "$NOTARIZE_ZIP"
+    ditto -c -k --keepParent "$HELPER_APP" "$NOTARIZE_ZIP"
 
     log_info "Submitting for notarization (this may take a few minutes)..."
 
@@ -175,6 +186,7 @@ if [[ "$SKIP_NOTARIZE" == false ]]; then
           --keychain-profile "$KEYCHAIN_PROFILE" \
           --wait
 
+    xcrun stapler staple "$HELPER_APP"
     rm "$NOTARIZE_ZIP"
     log_info "Notarization complete"
 else
@@ -182,19 +194,9 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Copy plugin and bundle binary
+# Add plugin build metadata
 # -----------------------------------------------------------------------------
 log_info "Assembling plugin package..."
-
-RELEASE_PLUGIN="$BUILD_DIR/$PLUGIN_NAME"
-cp -R "$PLUGIN_DIR" "$RELEASE_PLUGIN"
-
-# Remove any existing bin directory
-mkdir -p "$RELEASE_PLUGIN/bin"
-cp "$BINARY_PATH" "$RELEASE_PLUGIN/bin/"
-
-# Set executable permission
-chmod +x "$RELEASE_PLUGIN/bin/$BINARY_NAME"
 
 # Generate BuildInfo.lua with commit metadata
 cat > "$RELEASE_PLUGIN/BuildInfo.lua" <<EOF
@@ -242,7 +244,7 @@ echo "  Size:     $(du -h "$ZIP_PATH" | cut -f1)"
 echo
 
 if [[ "$SKIP_SIGN" == true ]]; then
-    log_warn "Binary is NOT signed - for testing only!"
+    log_warn "Helper app is ad-hoc signed, without Developer ID or notarization - for testing only!"
 elif [[ "$SKIP_NOTARIZE" == true ]]; then
     log_warn "Binary is signed but NOT notarized"
     log_warn "Users may see Gatekeeper warnings"
