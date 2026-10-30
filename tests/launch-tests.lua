@@ -19,35 +19,46 @@ local function write(path, content)
     file:close()
 end
 
--- Model Launch Services writing to its own streams, independently of open's
--- shell redirection. Warnings must not corrupt XML or leave capture files.
+-- The monitor's kernel status, helper XML, and diagnostics use separate files.
 execute = function(command)
-    assert(command:find('/usr/bin/open -n -W -a ', 1, true) == 1)
+    assert(command:find(Shell.escape("/tmp/Publisher's helper.app/Contents/MacOS/lrphotoslauncher"), 1, true) == 1)
     assert(command:find(Shell.escape("/tmp/Publisher's helper.app"), 1, true))
     assert(command:find(Shell.escape("/tmp/a 'quote' $(touch never-run).xml"), 1, true))
     local stdout = assert(command:match("%-%-stdout '([^']+)'"))
     local stderr = assert(command:match("%-%-stderr '([^']+)'"))
     local launcher = assert(command:match(" > '([^']+)' 2>&1$"))
+    local statusFile = assert(command:match("%-%-status '([^']+)'"))
     assert(stdout ~= stderr and stdout ~= launcher and stderr ~= launcher)
     write(stdout, '<result/>')
     write(stderr, 'helper warning')
     write(launcher, 'launcher message\n')
+    write(statusFile, 'version=1\nstate=exited\npid=42\nrawStatus=0\nexitCode=0\n')
     return 0
 end
-local status, output, diagnostics = Shell.executeAppWithOutput(
+local status, output, diagnostics, termination = Shell.executeAppWithOutput(
     "/tmp/Publisher's helper.app", { 'import', '--manifest', "/tmp/a 'quote' $(touch never-run).xml" })
 assert(status == 0 and output == '<result/>')
 assert(diagnostics == 'launcher message\nhelper warning')
+assert(termination.state == 'exited' and termination.exitCode == 0)
 local deletedCount = 0
 for path in pairs(deleted) do
     assert(io.open(path, 'r') == nil)
     deletedCount = deletedCount + 1
 end
-assert(deletedCount == 3)
-print('PASS: Launch Services arguments, separate output capture, and cleanup')
+assert(deletedCount == 4)
+print('PASS: monitor arguments, separate output/status capture, and cleanup')
+
+execute = function(command)
+    local statusFile = assert(command:match("%-%-status '([^']+)'"))
+    write(statusFile, 'version=1\nstate=exited\npid=42\nrawStatus=6\nexitCode=0\n')
+    return 0
+end
+local _, _, _, invalid = Shell.executeAppWithOutput('/app', {})
+assert(invalid == nil)
 
 -- Test importer error classification without involving PhotoKit.
-local response = { 0, '<success/>', 'warning' }
+local normalExit = { state = 'exited', exitCode = 0, rawStatus = 0 }
+local response = { 0, '<success/>', 'warning', normalExit }
 local receivedOutput
 local stubs = {
     ['lib/Shell'] = { executeAppWithOutput = function(app, args)
@@ -66,18 +77,26 @@ _PLUGIN = { path = '/plugin' }
 local Importer = dofile('ApplePhotosPublisher.lrplugin/lib/Importer.lua')
 assert(Importer.deletePhotos({ "photo'id" }).status == 'success')
 assert(receivedOutput == '<success/>')
-response = { 256, '<success/>', 'Unable to block on applications (initial call to kevent() failed: No such process)' }
-assert(Importer.deletePhotos({ "photo'id" }).status == 'success')
-response = { 256, '', 'app not found' }
+response = { 256, '', 'app not found', { state = 'startupFailed' } }
 local result = Importer.deletePhotos({ "photo'id" })
 assert(result.errorCode == 'LAUNCH_FAILED')
 assert(result.errorMessage:find('app not found', 1, true))
-response = { 0, '', '' }
+response = { 0, '', '', normalExit }
 result = Importer.deletePhotos({ "photo'id" })
 assert(result.errorCode == 'PARSE_ERROR')
-assert(result.errorMessage:find('may have crashed', 1, true))
-assert(not result.errorMessage:find('exit code 0', 1, true))
-print('PASS: XML success with stderr, failed launch, and helper exit without XML')
+assert(result.errorMessage:find('exited with code 0', 1, true))
+response = { 0, '<success/>', '', { state = 'signaled', signal = 6, rawStatus = 6 } }
+result = Importer.deletePhotos({ "photo'id" })
+assert(result.status == 'error' and result.errorCode == 'HELPER_CRASHED')
+assert(result.errorMessage:find('6 (SIGABRT)', 1, true))
+response = { 0, '<success/>', '', { state = 'exited', exitCode = 134, rawStatus = 34304 } }
+result = Importer.deletePhotos({ "photo'id" })
+assert(result.errorCode == 'HELPER_EXIT_FAILED')
+assert(result.errorMessage:find('code 134', 1, true) and not result.errorMessage:find('SIGABRT', 1, true))
+response = { 0, '<success/>', '' }
+result = Importer.deletePhotos({ "photo'id" })
+assert(result.status == 'error' and result.errorCode == 'MONITOR_FAILED')
+print('PASS: confirmed success, startup failure, missing XML/status, signal vs exit code, crash after success XML')
 
 if arg[1] == '--integration' then
     -- Execute the real launch path with non-mutating commands only. Test a
@@ -96,13 +115,13 @@ if arg[1] == '--integration' then
     local manifest = basePath .. " 'quoted' $.xml"
     write(manifest, '<manifest><photos/></manifest>')
     for _ = 1, 2 do
-        local _, xml, errors = Shell.executeAppWithOutput(app, { 'import', '--manifest', manifest })
+        local launch, xml, errors, outcome = Shell.executeAppWithOutput(app, { 'import', '--manifest', manifest })
         assert(xml:find('<status>success</status>', 1, true), xml .. errors)
+        assert(launch == 0 and outcome.state == 'exited' and outcome.exitCode == 0, errors)
     end
     os.remove(manifest)
-    local _, xml, errors = Shell.executeAppWithOutput(app, { '--not-a-real-option' })
-    -- Launch Services can also report a launch failure if the app exits early.
-    -- In either case, capture the argument parser's actual error on stderr.
+    local launch, xml, errors, outcome = Shell.executeAppWithOutput(app, { '--not-a-real-option' })
     assert(xml == '' and errors:find('Unknown option', 1, true), xml .. errors)
-    print('PASS: real helper launches, quoted manifest path, repeated XML responses, and stderr on parser failure')
+    assert(launch == 0 and outcome.state == 'exited' and outcome.exitCode == 64, errors)
+    print('PASS: real monitored helper, quoted manifest, repeated success, parser exit code 64')
 end

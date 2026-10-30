@@ -69,10 +69,8 @@ end
 ---
 --- On macOS, LrTasks.execute returns the raw wait status from system(3)
 --- rather than a plain exit code. The command runs under /bin/sh, so the
---- status normally encodes the shell's exit code in the high byte. When the
---- importer dies from a signal, the shell reports 128 + signal as its exit
---- code, so a crash shows up as a value such as 34304 (134 << 8, SIGABRT).
---- If the shell itself is killed, the signal number sits in the low byte.
+--- status normally encodes the shell's exit code in the high byte. This is
+--- only the launcher's status; helper signals come from the monitor record.
 ---
 --- @param status number The raw status from LrTasks.execute
 --- @return string A description such as "exit code 1" or "killed by signal 6 (SIGABRT)"
@@ -90,10 +88,7 @@ local function describeExitStatus(status)
     end
 
     local exitCode = high
-    if exitCode > 128 and exitCode < 160 then
-        return 'exit code ' .. tostring(exitCode)
-            .. ', killed by signal ' .. describeSignal(exitCode - 128)
-    elseif exitCode == 126 then
+    if exitCode == 126 then
         return 'exit code 126 (binary found but could not be executed)'
     elseif exitCode == 127 then
         return 'exit code 127 (binary not found)'
@@ -101,25 +96,41 @@ local function describeExitStatus(status)
     return 'exit code ' .. tostring(exitCode)
 end
 
---- Distinguish launch failures from helpers that exit without valid XML.
+--- Require a known, successful process exit before accepting success XML.
 --- @param result table The parsed result table (modified in place)
---- @param launchStatus number The raw status of open(1), not the helper's exit code
+--- @param launchStatus number The raw status of the launcher, not the helper
 --- @param output string|nil The raw command output
 --- @param diagnostics string The helper's stderr and launch errors
-local function fillParseError(result, launchStatus, output, diagnostics)
-    -- open -W can fail to attach its exit watcher if the app finishes quickly
-    -- (kevent reports ESRCH). A complete XML result is the helper's outcome.
-    if result.status then return end
-    result.status = STATUS_ERROR
-    if launchStatus ~= 0 then
-        result.errorCode = 'LAUNCH_FAILED'
-        result.errorMessage = 'Could not launch Apple Photos Publisher for Lightroom Classic ('
-            .. describeExitStatus(launchStatus) .. ', raw status ' .. tostring(launchStatus) .. ')'
-    else
+--- @param termination table|nil The monitor's validated termination record
+local function checkProcessResult(result, launchStatus, output, diagnostics, termination)
+    local helper = 'Apple Photos Publisher for Lightroom Classic'
+    if termination and termination.state == 'signaled' then
+        result.errorCode = 'HELPER_CRASHED'
+        result.errorMessage = helper .. ' was killed by signal ' .. describeSignal(termination.signal)
+            .. ' (raw status ' .. tostring(termination.rawStatus) .. ').'
+    elseif termination and termination.state == 'exited' and termination.exitCode ~= 0 then
+        local detail = helper .. ' exited with code ' .. tostring(termination.exitCode)
+            .. ' (raw status ' .. tostring(termination.rawStatus) .. ').'
+        if result.status == STATUS_ERROR and result.errorMessage then
+            result.errorMessage = result.errorMessage .. '\n' .. detail
+        else
+            result.errorCode = 'HELPER_EXIT_FAILED'
+            result.errorMessage = detail
+        end
+    elseif termination and termination.state == 'exited' then
+        if result.status then return end
         result.errorCode = 'PARSE_ERROR'
-        result.errorMessage = 'Apple Photos Publisher for Lightroom Classic exited without a valid XML response. '
-            .. 'The helper may have crashed; check ~/Library/Logs/DiagnosticReports/lrphotosimporter*.ips.'
+        result.errorMessage = helper .. ' exited with code 0 but did not return valid XML.'
+    elseif termination and termination.state == 'startupFailed' then
+        result.errorCode = 'LAUNCH_FAILED'
+        result.errorMessage = helper .. ' failed before its startup handshake completed. '
+            .. 'The helper\'s exit status is unavailable.'
+    else
+        result.errorCode = 'MONITOR_FAILED'
+        result.errorMessage = 'Could not determine how ' .. helper .. ' terminated (launcher '
+            .. describeExitStatus(launchStatus) .. '). The operation may have completed; check Photos before retrying.'
     end
+    result.status = STATUS_ERROR
     if output and output ~= '' then
         result.errorMessage = result.errorMessage .. '\nOutput: ' .. output
     else
@@ -218,7 +229,8 @@ function M.importPhotos(photos)
 
     local appPath = getAppPath()
     logger:info('Launching batch import via Launch Services: ' .. appPath)
-    local launchStatus, output, diagnostics = Shell.executeAppWithOutput(appPath, { 'import', '--manifest', manifestPath })
+    local launchStatus, output, diagnostics, termination = Shell.executeAppWithOutput(
+        appPath, { 'import', '--manifest', manifestPath })
     LrFileUtils.delete(manifestPath)
     if diagnostics and diagnostics ~= '' then
         logger:info('Batch import diagnostics:\n' .. diagnostics)
@@ -228,7 +240,7 @@ function M.importPhotos(photos)
     end
 
     local result = XML.parseBatchImportResult(output or '')
-    fillParseError(result, launchStatus, output, diagnostics)
+    checkProcessResult(result, launchStatus, output, diagnostics, termination)
     return result
 end
 
@@ -255,7 +267,7 @@ function M.deletePhotos(identifiers)
     end
     logger:info('Launching delete via Launch Services: ' .. appPath)
 
-    local launchStatus, output, diagnostics = Shell.executeAppWithOutput(appPath, arguments)
+    local launchStatus, output, diagnostics, termination = Shell.executeAppWithOutput(appPath, arguments)
     if diagnostics and diagnostics ~= '' then
         logger:info('Delete diagnostics:\n' .. diagnostics)
     end
@@ -264,7 +276,7 @@ function M.deletePhotos(identifiers)
     end
 
     local result = XML.parseDeleteResult(output or '')
-    fillParseError(result, launchStatus, output, diagnostics)
+    checkProcessResult(result, launchStatus, output, diagnostics, termination)
     return result
 end
 

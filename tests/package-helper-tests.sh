@@ -9,6 +9,7 @@ TEST_APP="$TEST_DIR/Signing test.app"
 
 bash "$PROJECT_ROOT/script/package-helper.sh" "$SOURCE_APP/Contents/MacOS/lrphotosimporter" "$TEST_APP"
 /usr/bin/codesign --verify --strict --all-architectures "$TEST_APP"
+/usr/bin/codesign --verify --strict --all-architectures "$TEST_APP/Contents/MacOS/lrphotoslauncher"
 SIGNATURE=$(/usr/bin/codesign -d --verbose=4 "$TEST_APP" 2>&1)
 [[ "$SIGNATURE" == *'Identifier=org.buddin.lrphotossync.lrphotosimporter'* ]]
 [[ "$SIGNATURE" != *'Info.plist=not bound'* ]]
@@ -21,4 +22,4 @@ if /usr/bin/codesign --verify --strict "$TEST_APP" 2>/dev/null; then
     echo 'FAIL: modifying Info.plist did not invalidate the signature' >&2
     exit 1
 fi
-echo 'PASS: helper identity, universal signature, and Info.plist tamper detection'
+echo 'PASS: helper identity, launcher signature, universal signature, and Info.plist tamper detection'

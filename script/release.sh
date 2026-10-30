@@ -158,6 +158,8 @@ bash "$SCRIPT_DIR/package-helper.sh" "$BINARY_PATH" "$HELPER_APP"
 # -----------------------------------------------------------------------------
 if [[ "$SKIP_SIGN" == false ]]; then
     log_info "Signing helper app with Developer ID..."
+    codesign --force --sign "$DEVELOPER_ID" --options runtime --timestamp \
+             "$HELPER_APP/Contents/MacOS/lrphotoslauncher"
     codesign --force \
              --sign "$DEVELOPER_ID" \
              --options runtime \
