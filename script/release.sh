@@ -125,12 +125,16 @@ enum BuildInfo {
 EOF
 log_info "Generated BuildInfo.swift (version=$VERSION)"
 
-swift build -c release --arch arm64 --arch x86_64 -Xswiftc -DRELEASE_BUILD
+SWIFT_BUILD_ARGS=(-c release --arch arm64 --arch x86_64 -Xswiftc -DRELEASE_BUILD)
+swift build "${SWIFT_BUILD_ARGS[@]}"
 
 # Clean up generated file
 rm -f "$BUILDINFO_SWIFT"
 
-BINARY_PATH="$IMPORTER_DIR/.build/apple/Products/Release/$BINARY_NAME"
+# Ask the toolchain where it put the product. The directory has moved between
+# Swift releases (.build/apple/... vs .build/out/...), and a hardcoded path can
+# silently pick up a stale binary from an earlier toolchain.
+BINARY_PATH="$(swift build "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)/$BINARY_NAME"
 
 if [[ ! -f "$BINARY_PATH" ]]; then
     log_error "Binary not found at $BINARY_PATH"

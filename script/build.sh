@@ -66,13 +66,16 @@ cd "$IMPORTER_DIR"
 
 if [[ "$BUILD_CONFIG" == "release" ]]; then
     log_info "Building release universal binary (arm64 + x86_64)..."
-    swift build -c release --arch arm64 --arch x86_64
-    BINARY_PATH="$IMPORTER_DIR/.build/apple/Products/Release/$BINARY_NAME"
+    SWIFT_BUILD_ARGS=(-c release --arch arm64 --arch x86_64)
 else
     log_info "Building debug binary..."
-    swift build
-    BINARY_PATH="$IMPORTER_DIR/.build/debug/$BINARY_NAME"
+    SWIFT_BUILD_ARGS=()
 fi
+swift build "${SWIFT_BUILD_ARGS[@]}"
+
+# Ask the toolchain where it put the product rather than hardcoding a path
+# that changes between Swift releases.
+BINARY_PATH="$(swift build "${SWIFT_BUILD_ARGS[@]}" --show-bin-path)/$BINARY_NAME"
 
 if [[ ! -f "$BINARY_PATH" ]]; then
     log_error "Binary not found at $BINARY_PATH"
