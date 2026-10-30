@@ -36,6 +36,20 @@ When republishing, album memberships and favorite status in Apple Photos are pre
 
 Removing a photo from the publish collection deletes it from Apple Photos.
 
+### Photos Library Access
+
+The first time you publish, macOS asks whether Lightroom Classic may access your Photos library. Choose **Full Access**. The plugin requires access to previously published photos and their albums so it can replace photos and preserve album memberships.
+
+macOS only asks once. If you chose Limited Access or Don't Allow, publishing fails with a dialog explaining the fix: open System Settings > Privacy & Security > Photos, set Lightroom Classic to Full Access, then quit and reopen Lightroom Classic.
+
+If Lightroom Classic is missing from the Photos list, quit Lightroom and run this in Terminal to reset only its Photos permission:
+
+```sh
+tccutil reset Photos com.adobe.LightroomClassicCC7
+```
+
+Reopen Lightroom and publish a photo through Apple Photos Publisher to trigger a new request, then choose **Full Access**. The reset does not grant access itself. If no prompt appears, check the plugin log at `~/Library/Logs/Adobe/Lightroom/LrClassicLogs/ApplePhotosPublisher.log` for an importer failure; resetting permissions cannot fix a helper that fails before requesting access.
+
 ### Delete Confirmation Dialog
 
 When removing or republishing photos, macOS will present a system confirmation dialog asking permission to delete from Apple Photos. This is a PhotoKit requirement enforced by Apple; apps cannot silently delete photos from the user's library. The dialog is expected and unavoidable.

@@ -5,8 +5,14 @@ enum PhotoKitError: Error, LocalizedError, Sendable {
     /// Read authorization not granted
     case readAuthorizationDenied
 
-    /// Write authorization not granted
+    /// Write authorization not granted (the user chose Don't Allow, or access was never granted)
     case writeAuthorizationDenied
+
+    /// The user granted Limited Access rather than Full Access
+    case writeAuthorizationLimited
+
+    /// Photos access is restricted by Screen Time or a management profile
+    case writeAuthorizationRestricted
 
     /// Asset not found in library
     case assetNotFound(identifier: String)
@@ -23,13 +29,26 @@ enum PhotoKitError: Error, LocalizedError, Sendable {
     /// Add to album failed
     case addToAlbumFailed(assetID: String, albumID: String, reason: String)
 
+    /// How the user can change the Photos permission. macOS records the grant
+    /// against the responsible process, which is Lightroom Classic when the
+    /// plugin launches this tool, so that is the row they need to change.
+    private static let fullAccessRemedy = "Open System Settings > Privacy & Security > Photos, "
+        + "set Lightroom Classic to Full Access, then quit and reopen Lightroom Classic."
+
     /// A human-readable description of the error, conforming to `LocalizedError`.
     var errorDescription: String? {
         switch self {
         case .readAuthorizationDenied:
             return "Photos library read access not authorized"
         case .writeAuthorizationDenied:
-            return "Photos library write access not authorized"
+            return "Lightroom Classic does not have Full Access to your Photos library. "
+                + Self.fullAccessRemedy
+        case .writeAuthorizationLimited:
+            return "Lightroom Classic has Limited Access to your Photos library, but Apple Photos Publisher "
+                + "requires Full Access to replace published photos and preserve album memberships. " + Self.fullAccessRemedy
+        case .writeAuthorizationRestricted:
+            return "Access to the Photos library is restricted on this Mac, for example by "
+                + "Screen Time or a management profile, so it cannot be granted to Lightroom Classic."
         case .assetNotFound(let id):
             return "Asset not found: \(id)"
         case .albumNotFound(let id):
@@ -50,6 +69,10 @@ enum PhotoKitError: Error, LocalizedError, Sendable {
             return "READ_AUTH_DENIED"
         case .writeAuthorizationDenied:
             return "WRITE_AUTH_DENIED"
+        case .writeAuthorizationLimited:
+            return "WRITE_AUTH_LIMITED"
+        case .writeAuthorizationRestricted:
+            return "WRITE_AUTH_RESTRICTED"
         case .assetNotFound:
             return "ASSET_NOT_FOUND"
         case .albumNotFound:

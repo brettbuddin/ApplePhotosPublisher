@@ -37,6 +37,21 @@ struct BatchImportTests {
         #expect(mock.importPhotoCalls.isEmpty)
     }
 
+    @Test func authFailureLimitedAccess() async throws {
+        let mock = MockPhotoLibrary()
+        mock.ensureWriteAccessError = PhotoKitError.writeAuthorizationLimited
+
+        let cmd = ImportCommand()
+        let photos = [ManifestPhoto(path: "/tmp/a.jpg", previousIdentifier: nil)]
+        let xml = await cmd.executeBatchImport(photoKit: mock, photos: photos)
+        let root = try parseResult(xml)
+        #expect(root.elements(forName: "status").first?.stringValue == "error")
+        #expect(root.elements(forName: "errorCode").first?.stringValue == "WRITE_AUTH_LIMITED")
+        let message = try #require(root.elements(forName: "errorMessage").first?.stringValue)
+        #expect(message.contains("Full Access"))
+        #expect(mock.importPhotoCalls.isEmpty)
+    }
+
     @Test func authFailureGenericError() async throws {
         let mock = MockPhotoLibrary()
         mock.ensureWriteAccessError = NSError(domain: "test", code: 42, userInfo: [

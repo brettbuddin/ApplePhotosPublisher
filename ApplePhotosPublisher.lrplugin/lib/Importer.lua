@@ -24,17 +24,97 @@ local M = {}
 local STATUS_SUCCESS = 'success'
 local STATUS_ERROR = 'error'
 
+--- Error codes the importer returns when it lacks access to the Photos
+--- library. macOS only prompts for Photos access once, so these all need the
+--- user to change the setting in System Settings and deserve a dialog rather
+--- than a per-photo failure message.
+local AUTHORIZATION_ERROR_CODES = {
+    READ_AUTH_DENIED = true,
+    WRITE_AUTH_DENIED = true,
+    WRITE_AUTH_LIMITED = true,
+    WRITE_AUTH_RESTRICTED = true,
+}
+
+--- Names for the signals a crashed importer is likely to die from.
+local SIGNAL_NAMES = {
+    [1] = 'SIGHUP',
+    [2] = 'SIGINT',
+    [3] = 'SIGQUIT',
+    [4] = 'SIGILL',
+    [5] = 'SIGTRAP',
+    [6] = 'SIGABRT',
+    [7] = 'SIGEMT',
+    [8] = 'SIGFPE',
+    [9] = 'SIGKILL',
+    [10] = 'SIGBUS',
+    [11] = 'SIGSEGV',
+    [12] = 'SIGSYS',
+    [13] = 'SIGPIPE',
+    [14] = 'SIGALRM',
+    [15] = 'SIGTERM',
+}
+
+--- Describe a signal number as "N (NAME)" when the name is known.
+--- @param signal number The signal number
+--- @return string
+local function describeSignal(signal)
+    local name = SIGNAL_NAMES[signal]
+    if name then
+        return tostring(signal) .. ' (' .. name .. ')'
+    end
+    return tostring(signal)
+end
+
+--- Describe the status returned by LrTasks.execute in human terms.
+---
+--- On macOS, LrTasks.execute returns the raw wait status from system(3)
+--- rather than a plain exit code. The command runs under /bin/sh, so the
+--- status normally encodes the shell's exit code in the high byte. When the
+--- importer dies from a signal, the shell reports 128 + signal as its exit
+--- code, so a crash shows up as a value such as 34304 (134 << 8, SIGABRT).
+--- If the shell itself is killed, the signal number sits in the low byte.
+---
+--- @param status number The raw status from LrTasks.execute
+--- @return string A description such as "exit code 1" or "killed by signal 6 (SIGABRT)"
+local function describeExitStatus(status)
+    if type(status) ~= 'number' then
+        return 'status ' .. tostring(status)
+    end
+
+    local high = math.floor(status / 256)
+    local low = status % 256
+    local lowSignal = low % 128 -- bit 0x80 marks a core dump
+
+    if lowSignal ~= 0 then
+        return 'killed by signal ' .. describeSignal(lowSignal)
+    end
+
+    local exitCode = high
+    if exitCode > 128 and exitCode < 160 then
+        return 'exit code ' .. tostring(exitCode)
+            .. ', killed by signal ' .. describeSignal(exitCode - 128)
+    elseif exitCode == 126 then
+        return 'exit code 126 (binary found but could not be executed)'
+    elseif exitCode == 127 then
+        return 'exit code 127 (binary not found)'
+    end
+    return 'exit code ' .. tostring(exitCode)
+end
+
 --- Fill in a parse-error fallback when the XML parser returned no status
 --- @param result table The parsed result table (modified in place)
---- @param exitCode number The shell exit code
+--- @param exitCode number The raw status returned by LrTasks.execute
 --- @param output string|nil The raw command output
 local function fillParseError(result, exitCode, output)
     if result.status then return end
     result.status = STATUS_ERROR
     result.errorCode = 'PARSE_ERROR'
-    result.errorMessage = 'Failed to parse importer response (exit code: ' .. tostring(exitCode) .. ')'
+    result.errorMessage = 'Failed to parse importer response ('
+        .. describeExitStatus(exitCode) .. ', raw status ' .. tostring(exitCode) .. ')'
     if output and output ~= '' then
         result.errorMessage = result.errorMessage .. '\nOutput: ' .. output
+    else
+        result.errorMessage = result.errorMessage .. '\nThe importer produced no output.'
     end
 end
 
@@ -171,6 +251,14 @@ function M.deletePhotos(identifiers)
     local result = XML.parseDeleteResult(output or '')
     fillParseError(result, exitCode, output)
     return result
+end
+
+--- Whether a result describes a missing Photos library permission.
+--- @param result table A result table from importPhotos or deletePhotos
+--- @return boolean
+function M.isAuthorizationError(result)
+    return result.status == STATUS_ERROR
+        and AUTHORIZATION_ERROR_CODES[result.errorCode or ''] == true
 end
 
 --- Status value indicating a successful operation
