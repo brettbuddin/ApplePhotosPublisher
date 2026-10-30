@@ -6,6 +6,8 @@
 ]]
 
 local LrApplication = import 'LrApplication'
+local LrDialogs = import 'LrDialogs'
+local LrErrors = import 'LrErrors'
 
 local pluginLoad = require 'PluginModuleLoader'
 local Importer = pluginLoad 'lib/Importer'
@@ -16,6 +18,17 @@ local logger = pluginLoad 'lib/Logger'
 local PROP_LOCAL_IDENTIFIER = 'photosLocalIdentifier'
 --- Plugin metadata key for the last sync timestamp.
 local PROP_SYNC_DATE = 'photosSyncDate'
+
+--- Title of the dialog shown when Photos library access is missing.
+local AUTHORIZATION_DIALOG_TITLE = 'Lightroom Classic needs Full Access to Photos'
+
+--- Tell the user that Photos library access is missing and how to fix it.
+--- The importer's message names the current setting (Limited Access, no
+--- access, or restricted) and the System Settings path to change it.
+--- @param result table An error result from the importer
+local function showAuthorizationError(result)
+    LrDialogs.message(AUTHORIZATION_DIALOG_TITLE, result.errorMessage, 'critical')
+end
 
 --- Lightroom publish/export service provider table.
 --- @class PhotosServiceProvider
@@ -157,6 +170,9 @@ local function importPhotoBatch(progressScope, renditionPhotos, catalog)
     else
         local errorMsg = batchResult.errorMessage or batchResult.errorCode or 'Batch import failed'
         logger:error('Batch import failed: ' .. errorMsg)
+        if Importer.isAuthorizationError(batchResult) then
+            showAuthorizationError(batchResult)
+        end
         for _, rp in ipairs(renditionPhotos) do
             rp.rendition:uploadFailed(errorMsg)
         end
@@ -280,7 +296,13 @@ function provider.deletePhotosFromPublishedCollection(publishSettings, photoIDs,
     else
         local errorMsg = deleteResult.errorMessage or deleteResult.errorCode or 'Delete failed'
         logger:error('Failed to delete photos: ' .. errorMsg)
-        error(errorMsg)
+        if Importer.isAuthorizationError(deleteResult) then
+            -- Nothing was passed to deletedCallback, so Lightroom keeps the
+            -- photos in the collection for a retry once access is granted.
+            showAuthorizationError(deleteResult)
+            return
+        end
+        LrErrors.throwUserError(errorMsg)
     end
 end
 

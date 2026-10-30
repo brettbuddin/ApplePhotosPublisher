@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>org.buddin.lrphotossync.lrphotosimporter</string>
+	<key>CFBundleName</key>
+	<string>lrphotosimporter</string>
+	<key>CFBundleExecutable</key>
+	<string>lrphotosimporter</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Apple Photos Publisher imports photos published from Lightroom Classic into your Photos library and removes versions you unpublish.</string>
+</dict>
+</plist>

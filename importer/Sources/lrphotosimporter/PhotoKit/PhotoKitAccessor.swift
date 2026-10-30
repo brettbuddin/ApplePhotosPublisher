@@ -36,19 +36,29 @@ final class PhotoKitAccessor: PhotoLibrary, @unchecked Sendable {
         }
     }
 
-    /// Ensure we have write access, throwing if not
+    /// Ensure we have full read/write access, throwing if not.
+    ///
+    /// macOS only shows the Photos permission prompt while the status is
+    /// `.notDetermined`. Once the user has answered, whether with Full Access,
+    /// Limited Access or Don't Allow, another request does not show the prompt
+    /// unless the decision is reset. Direct users to System Settings. Each outcome short of full
+    /// access maps to its own error so the user can be told what to change.
     func ensureWriteAccess() async throws {
-        let status = await authorizationStatus()
+        var status = await authorizationStatus()
+        if status == .notDetermined {
+            status = await requestAuthorization()
+        }
 
         switch status {
         case .authorized:
             return
-        case .notDetermined:
-            let newStatus = await requestAuthorization()
-            if newStatus != .authorized {
-                throw PhotoKitError.writeAuthorizationDenied
-            }
-        default:
+        case .limited:
+            throw PhotoKitError.writeAuthorizationLimited
+        case .restricted:
+            throw PhotoKitError.writeAuthorizationRestricted
+        case .denied, .notDetermined:
+            throw PhotoKitError.writeAuthorizationDenied
+        @unknown default:
             throw PhotoKitError.writeAuthorizationDenied
         }
     }

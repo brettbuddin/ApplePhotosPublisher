@@ -20,6 +20,18 @@ let package = Package(
             name: "lrphotosimporter",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ],
+            exclude: ["Info.plist"],
+            linkerSettings: [
+                // Embed Info.plist in the binary so the Photos usage description
+                // travels with the executable. PhotoKit reads it from the main
+                // bundle, and a bare command-line tool has no bundle of its own.
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "\(Context.packageDirectory)/Sources/lrphotosimporter/Info.plist"
+                ])
             ]
         ),
         .testTarget(
