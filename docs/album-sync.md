@@ -11,9 +11,10 @@ an album, a published collection set becomes a folder.
 
 ## Decisions
 
-If there is a collection, it is published into Apple Photos. There are no special cases. The
-built-in `Apple Photos` collection keeps its name and mirrors to an album exactly like any
-collection the user adds.
+Collections the user adds mirror to albums. The built-in `Apple Photos` collection does not:
+publishing there means getting a photo into the Photos library without filing it anywhere, so
+it has no album of its own. It keeps its name in the panel, which Lightroom will not let the
+user change anyway.
 
 Published collection sets mirror to folders, so the hierarchy carries over. A collection at
 the top level of the service becomes a top-level album; a collection inside a set becomes an
@@ -25,7 +26,11 @@ renames its folder.
 Deleting a collection deletes its album and never its assets.
 
 Removing a photo from a collection takes the asset out of that collection's album, and deletes
-the asset only when no other collection in the service still publishes the photo.
+the asset only when no other collection in the service still publishes the photo. The two
+cases that follow are the point of the split: a photo in only `Family`, removed from it, is
+orphaned and deleted; the same photo also in `Apple Photos` survives and becomes an unfiled
+library photo, because the default collection still publishes it and has no album to remove it
+from.
 
 Custom sort order is out of scope. See [Deferred](#deferred).
 
@@ -45,6 +50,7 @@ doubles as the repair path for drift after the user edits an album in Photos.
 | Lightroom | Apple Photos | Identifier stored as |
 | --- | --- | --- |
 | Published collection | User album (`PHAssetCollectionTypeAlbum` / `AlbumRegular`) | collection `remoteId` |
+| Default collection | nothing; the photo is in the library, unfiled | n/a |
 | Published collection set | Folder (`PHCollectionList`) | collection set `remoteId` |
 | Published photo | Asset | photo `remoteId` plus `photosLocalIdentifier` |
 
@@ -94,9 +100,15 @@ Supporting values:
   the context menus read "Create Album" and "Create Folder".
 - `titleForGoToPublishedCollection = 'Show in Photos'`.
 
-Whether Lightroom lets the user rename the built-in default collection is unconfirmed. Either
-way the handler is uniform, so this only decides whether the `Apple Photos` album can ever
-change name.
+Lightroom does not allow renaming the built-in default collection, confirmed in the panel.
+That is its own policy rather than anything the plugin asks for: `defaultCollectionCanBeDeleted`
+is the only knob we set, and we leave `disableRenamePublishedCollection` alone. It no longer
+matters for the mirror, since the default collection has no album to name, but it does mean the
+panel entry stays `Apple Photos` permanently.
+
+Every lifecycle callback that implies an album checks `isDefaultCollection` first. A `remoteId`
+can survive on that collection from before it stopped mirroring, and acting on it would move or
+rename an album nothing manages any more.
 
 ### Correctness fixes this feature requires
 
@@ -178,6 +190,36 @@ recursively*. That matches Lightroom, where deleting a collection set takes its 
 it, and it still only removes containers rather than assets. It does mean
 `deletePublishedCollection` for a set destroys the child albums in one call, so the child
 collections' recorded identifiers are stale afterwards.
+
+### Lightroom places an album once, then leaves it alone
+
+Lightroom decides where an album is created: `ensureAlbum` puts it in the folder the
+collection's position implies, at the top level when the collection has no collection set.
+After that the placement is the user's. Resolving an album by its recorded identifier returns
+it as it is and never corrects its parent, so moving it in Photos sticks.
+
+Moving a collection in Photos does not change its `localIdentifier`, which is what the plugin
+records, so the linkage survives. The probe confirmed this rather than assuming it: it moved
+an album into a folder and back out, re-fetching it by the same identifier each time.
+
+Dragging a collection into a set in Lightroom still moves its album, through
+`reparentPublishedCollection`. Lightroom asked for that move, so it happens.
+
+One hazard follows from this. `deleteCollectionLists:` is recursive, so deleting a collection
+set in Lightroom deletes its Photos folder and every album inside, including an album the user
+moved in that belongs to a collection which was *not* deleted. That would destroy a live
+collection's album as a side effect. Moving unrecognized children out to the top level before
+deleting the folder would prevent it.
+
+### Album titles drift one way
+
+`ensureAlbum` finds an album by its recorded identifier and uses it as it is, without checking
+that its title still matches the collection. So a rename in Lightroom reaches Photos, but a
+rename in Photos is never corrected, and for the default collection there is no Lightroom-side
+rename available at all.
+
+Enforcing the title on every publish would make Lightroom authoritative and is cheap, since
+renames are silent. The cost is overriding a rename the user made in Photos deliberately.
 
 ### Deleting a collection costs a dialog
 
@@ -266,8 +308,11 @@ album  sync   --manifest <path>
 folder ensure --name <name> [--identifier <id>] [--parent <id>]
 folder rename --identifier <id> --name <name>
 folder delete --identifier <id>
-move          --identifier <id> [--folder <id>]
+folder move   --identifier <id> [--folder <id>]
 ```
+
+`folder move` takes an album as readily as a folder, since reparenting is the same operation
+either way.
 
 `album sync` is the reconcile path: it sets membership to exactly the assets listed.
 
@@ -349,13 +394,16 @@ album selected, confirmed by eye because no API reports it back. So
 
 ### Still open
 
-1. Whether Lightroom allows renaming the built-in default collection, which decides whether
-   the `Apple Photos` album's name is fixed. Only Lightroom itself can answer this one.
-2. Whether `info.photoIds` really is passed to `deletePublishedCollection`. The Flickr sample
-   reads it, but the SDK reference does not document it. See below.
+1. Whether `info.photoIds` really is passed to `deletePublishedCollection`. The Flickr sample
+   reads it, but the SDK reference does not document it, and it decides whether deleting a
+   collection costs one confirmation dialog or two. The implementation copes either way.
 
-Both are Lightroom-side questions, so they resolve during implementation rather than needing
-another probe.
+### Settled in the panel
+
+The built-in default collection cannot be renamed. Lightroom enforces that itself, so the
+`Apple Photos` album keeps its name unless it is renamed in Photos, which nothing in
+Lightroom will ever undo. See
+[Album titles drift one way](#album-titles-drift-one-way).
 
 ## Work breakdown
 

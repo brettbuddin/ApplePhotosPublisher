@@ -171,28 +171,27 @@ struct ImportTests {
         """
         let doc = try XMLDocument(xmlString: xml)
         let cmd = ImportCommand()
-        let photos = try cmd.parseManifestXML(doc)
-        #expect(photos.count == 2)
-        #expect(photos[0].path == "/tmp/a.jpg")
-        #expect(photos[0].previousIdentifier == "prev-1")
-        #expect(photos[1].path == "/tmp/b.jpg")
-        #expect(photos[1].previousIdentifier == nil)
+        let manifest = try cmd.parseManifestXML(doc)
+        #expect(manifest.photos.count == 2)
+        #expect(manifest.photos[0].path == "/tmp/a.jpg")
+        #expect(manifest.photos[0].previousIdentifier == "prev-1")
+        #expect(manifest.photos[1].path == "/tmp/b.jpg")
+        #expect(manifest.photos[1].previousIdentifier == nil)
+        #expect(manifest.album == nil)
     }
 
     @Test func parseEmptyManifest() throws {
         let xml = "<manifest><photos></photos></manifest>"
         let doc = try XMLDocument(xmlString: xml)
         let cmd = ImportCommand()
-        let photos = try cmd.parseManifestXML(doc)
-        #expect(photos.isEmpty)
+        #expect(try cmd.parseManifestXML(doc).photos.isEmpty)
     }
 
     @Test func parseManifestNoPhotosElement() throws {
         let xml = "<manifest></manifest>"
         let doc = try XMLDocument(xmlString: xml)
         let cmd = ImportCommand()
-        let photos = try cmd.parseManifestXML(doc)
-        #expect(photos.isEmpty)
+        #expect(try cmd.parseManifestXML(doc).photos.isEmpty)
     }
 
     @Test func parseInvalidManifestRoot() throws {

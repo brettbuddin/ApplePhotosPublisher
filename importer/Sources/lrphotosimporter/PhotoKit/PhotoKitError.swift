@@ -29,6 +29,34 @@ enum PhotoKitError: Error, LocalizedError, Sendable {
     /// Add to album failed
     case addToAlbumFailed(assetID: String, albumID: String, reason: String)
 
+    /// Folder not found in library
+    case folderNotFound(identifier: String)
+
+    /// Photos refused the edit this container does not support
+    case operationNotPermitted(identifier: String, operation: String)
+
+    /// The user dismissed the macOS confirmation dialog without allowing the change.
+    ///
+    /// PhotoKit reports this as `PHPhotosErrorUserCancelled`. Deleting an album or a folder
+    /// always raises that dialog, so a refusal is an ordinary outcome rather than a fault,
+    /// and it has to stay distinguishable from one.
+    case userCancelled(operation: String)
+
+    /// Creating an album or folder failed
+    case createCollectionFailed(name: String, reason: String)
+
+    /// Renaming an album or folder failed
+    case renameCollectionFailed(identifier: String, name: String, reason: String)
+
+    /// Deleting an album or folder failed
+    case deleteCollectionFailed(identifier: String, reason: String)
+
+    /// Moving an album or folder to another parent failed
+    case moveCollectionFailed(identifier: String, reason: String)
+
+    /// Removing assets from an album failed
+    case removeFromAlbumFailed(albumID: String, reason: String)
+
     /// Launch Services gives the helper its own Photos permission in Settings.
     private static let fullAccessRemedy = "Open System Settings > Privacy & Security > Photos, "
         + "set Apple Photos Publisher for Lightroom Classic to Full Access, then retry publishing in Lightroom Classic."
@@ -57,6 +85,23 @@ enum PhotoKitError: Error, LocalizedError, Sendable {
             return "Failed to delete \(ids.count) assets: \(reason)"
         case .addToAlbumFailed(let assetID, let albumID, let reason):
             return "Failed to add \(assetID) to album \(albumID): \(reason)"
+        case .folderNotFound(let id):
+            return "Folder not found: \(id)"
+        case .operationNotPermitted(let id, let operation):
+            return "Photos does not allow \(operation) on \(id)"
+        case .userCancelled(let operation):
+            return "You cancelled the Photos confirmation dialog, so \(operation) did not happen. "
+                + "Nothing in your Photos library was changed."
+        case .createCollectionFailed(let name, let reason):
+            return "Failed to create \(name): \(reason)"
+        case .renameCollectionFailed(let id, let name, let reason):
+            return "Failed to rename \(id) to \(name): \(reason)"
+        case .deleteCollectionFailed(let id, let reason):
+            return "Failed to delete \(id): \(reason)"
+        case .moveCollectionFailed(let id, let reason):
+            return "Failed to move \(id): \(reason)"
+        case .removeFromAlbumFailed(let albumID, let reason):
+            return "Failed to remove assets from album \(albumID): \(reason)"
         }
     }
 
@@ -81,6 +126,22 @@ enum PhotoKitError: Error, LocalizedError, Sendable {
             return "DELETE_FAILED"
         case .addToAlbumFailed:
             return "ADD_TO_ALBUM_FAILED"
+        case .folderNotFound:
+            return "FOLDER_NOT_FOUND"
+        case .operationNotPermitted:
+            return "OPERATION_NOT_PERMITTED"
+        case .userCancelled:
+            return "USER_CANCELLED"
+        case .createCollectionFailed:
+            return "CREATE_COLLECTION_FAILED"
+        case .renameCollectionFailed:
+            return "RENAME_COLLECTION_FAILED"
+        case .deleteCollectionFailed:
+            return "DELETE_COLLECTION_FAILED"
+        case .moveCollectionFailed:
+            return "MOVE_COLLECTION_FAILED"
+        case .removeFromAlbumFailed:
+            return "REMOVE_FROM_ALBUM_FAILED"
         }
     }
 }

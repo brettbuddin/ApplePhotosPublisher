@@ -22,6 +22,13 @@ return {
     LrInitPlugin = 'PluginInit.lua',
     LrMetadataProvider = 'PhotosMetadataDefinition.lua',
 
+    LrLibraryMenuItems = {
+        {
+            title = 'Reconcile Apple Photos Albums',
+            file = 'ReconcileAlbums.lua',
+        },
+    },
+
     LrExportServiceProvider = {
         title = 'Apple Photos',
         file = 'PhotosServiceProvider.lua',

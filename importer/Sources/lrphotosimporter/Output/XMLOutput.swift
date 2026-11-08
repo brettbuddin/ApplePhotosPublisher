@@ -20,6 +20,12 @@ struct SingleImportResult {
     /// Whether the favorite status was successfully restored from the previous version.
     let favoriteRestored: Bool
 
+    /// Whether an existing asset was reused instead of importing a new one.
+    ///
+    /// True when the photo was only being added to another collection, so its asset was
+    /// already current and replacing it would have orphaned the collections pointing at it.
+    let reused: Bool
+
     /// A machine-readable error code, or `nil` on success.
     let errorCode: String?
 
@@ -32,11 +38,13 @@ struct SingleImportResult {
     ///   - localIdentifier: The Photos library local identifier of the new asset.
     ///   - albumsRestored: Albums whose membership was restored.
     ///   - favoriteRestored: Whether the favorite flag was restored.
+    ///   - reused: Whether an existing asset was reused instead of imported.
     static func success(
         path: String,
         localIdentifier: String,
         albumsRestored: [AlbumMembership],
-        favoriteRestored: Bool
+        favoriteRestored: Bool,
+        reused: Bool = false
     ) -> SingleImportResult {
         SingleImportResult(
             path: path,
@@ -44,6 +52,7 @@ struct SingleImportResult {
             localIdentifier: localIdentifier,
             albumsRestored: albumsRestored,
             favoriteRestored: favoriteRestored,
+            reused: reused,
             errorCode: nil,
             errorMessage: nil
         )
@@ -61,6 +70,7 @@ struct SingleImportResult {
             localIdentifier: nil,
             albumsRestored: [],
             favoriteRestored: false,
+            reused: false,
             errorCode: code,
             errorMessage: message
         )
@@ -79,58 +89,76 @@ enum XMLOutput {
     /// - Parameters:
     ///   - results: The individual import results for each photo in the batch.
     ///   - albumUuid: The User Library album UUID used to construct deep-link URLs, or `nil`.
+    ///   - album: The album the batch was filed into and the folders leading to it, so the
+    ///     plugin can record every identifier and notice which stale ones were recreated.
     /// - Returns: A complete XML document string.
-    static func batchImportResult(results: [SingleImportResult], albumUuid: String?) -> String {
+    static func batchImportResult(
+        results: [SingleImportResult], albumUuid: String?, album: ResolvedAlbum? = nil
+    ) -> String {
         let root = XMLElement(name: "batchImportResult")
         root.addChild(XMLElement(name: "status", stringValue: "success"))
 
+        if let album {
+            root.addChild(element(for: album))
+        }
+
         let resultsElement = XMLElement(name: "results")
         for result in results {
-            let resultElement = XMLElement(name: "result")
-            resultElement.setAttributesWith(["path": result.path])
-            resultElement.addChild(XMLElement(name: "status", stringValue: result.status))
-
-            if result.status == "success" {
-                if let localId = result.localIdentifier {
-                    resultElement.addChild(XMLElement(name: "localIdentifier", stringValue: localId))
-                    let assetUuid = localId.uuidPrefix
-                    let url: String
-                    if let albumUuid {
-                        url = "photos:albums?albumUuid=\(albumUuid)&assetUuid=\(assetUuid)"
-                    } else {
-                        url = "photos://asset?assetLocalIdentifier=\(assetUuid)"
-                    }
-                    resultElement.addChild(XMLElement(name: "url", stringValue: url))
-                }
-
-                if result.favoriteRestored {
-                    resultElement.addChild(XMLElement(name: "favoriteRestored", stringValue: "true"))
-                }
-
-                if !result.albumsRestored.isEmpty {
-                    let albumsElement = XMLElement(name: "albumsRestored")
-                    for album in result.albumsRestored {
-                        let albumElement = XMLElement(name: "album")
-                        albumElement.addChild(XMLElement(name: "identifier", stringValue: album.uuid))
-                        albumElement.addChild(XMLElement(name: "title", stringValue: album.title ?? ""))
-                        albumsElement.addChild(albumElement)
-                    }
-                    resultElement.addChild(albumsElement)
-                }
-            } else {
-                if let code = result.errorCode {
-                    resultElement.addChild(XMLElement(name: "errorCode", stringValue: code))
-                }
-                if let message = result.errorMessage {
-                    resultElement.addChild(XMLElement(name: "errorMessage", stringValue: message))
-                }
-            }
-
-            resultsElement.addChild(resultElement)
+            resultsElement.addChild(element(for: result, albumUuid: albumUuid))
         }
         root.addChild(resultsElement)
 
         return xmlString(from: root)
+    }
+
+    /// Builds the `<result>` element for one photo in a batch.
+    private static func element(for result: SingleImportResult, albumUuid: String?) -> XMLElement {
+        let resultElement = XMLElement(name: "result")
+        resultElement.setAttributesWith(["path": result.path])
+        resultElement.addChild(XMLElement(name: "status", stringValue: result.status))
+
+        guard result.status == "success" else {
+            if let code = result.errorCode {
+                resultElement.addChild(XMLElement(name: "errorCode", stringValue: code))
+            }
+            if let message = result.errorMessage {
+                resultElement.addChild(XMLElement(name: "errorMessage", stringValue: message))
+            }
+            return resultElement
+        }
+
+        if let localId = result.localIdentifier {
+            resultElement.addChild(XMLElement(name: "localIdentifier", stringValue: localId))
+            let assetUuid = localId.uuidPrefix
+            let url: String
+            if let albumUuid {
+                url = "photos:albums?albumUuid=\(albumUuid)&assetUuid=\(assetUuid)"
+            } else {
+                url = "photos://asset?assetLocalIdentifier=\(assetUuid)"
+            }
+            resultElement.addChild(XMLElement(name: "url", stringValue: url))
+        }
+
+        if result.favoriteRestored {
+            resultElement.addChild(XMLElement(name: "favoriteRestored", stringValue: "true"))
+        }
+
+        if result.reused {
+            resultElement.addChild(XMLElement(name: "reused", stringValue: "true"))
+        }
+
+        if !result.albumsRestored.isEmpty {
+            let albumsElement = XMLElement(name: "albumsRestored")
+            for album in result.albumsRestored {
+                let albumElement = XMLElement(name: "album")
+                albumElement.addChild(XMLElement(name: "identifier", stringValue: album.uuid))
+                albumElement.addChild(XMLElement(name: "title", stringValue: album.title ?? ""))
+                albumsElement.addChild(albumElement)
+            }
+            resultElement.addChild(albumsElement)
+        }
+
+        return resultElement
     }
 
     /// Generates XML for a fatal batch import error that prevented processing.
@@ -165,6 +193,56 @@ enum XMLOutput {
     /// - Returns: A complete XML document string.
     static func deleteError(code: String, message: String) -> String {
         let root = XMLElement(name: "deleteResult")
+        root.addChild(XMLElement(name: "status", stringValue: "error"))
+        root.addChild(XMLElement(name: "errorCode", stringValue: code))
+        root.addChild(XMLElement(name: "errorMessage", stringValue: message))
+        return xmlString(from: root)
+    }
+
+    /// Builds the `<album>` block, including the folder chain in manifest order.
+    private static func element(for resolved: ResolvedAlbum) -> XMLElement {
+        let albumElement = XMLElement(name: "album")
+        albumElement.addChild(
+            XMLElement(name: "identifier", stringValue: resolved.album.identifier))
+        albumElement.addChild(
+            XMLElement(name: "created", stringValue: resolved.album.created ? "true" : "false"))
+
+        if !resolved.folders.isEmpty {
+            let foldersElement = XMLElement(name: "folders")
+            for folder in resolved.folders {
+                let folderElement = XMLElement(name: "folder")
+                folderElement.addChild(
+                    XMLElement(name: "identifier", stringValue: folder.identifier))
+                folderElement.addChild(
+                    XMLElement(name: "created", stringValue: folder.created ? "true" : "false"))
+                foldersElement.addChild(folderElement)
+            }
+            albumElement.addChild(foldersElement)
+        }
+
+        return albumElement
+    }
+
+    // MARK: - Collection Results
+
+    /// Generates XML for a successful album or folder operation.
+    /// - Parameters:
+    ///   - collection: The container the operation resolved, when it produced one.
+    /// - Returns: A complete XML document string.
+    static func collectionSuccess(collection: CollectionRef? = nil) -> String {
+        let root = XMLElement(name: "collectionResult")
+        root.addChild(XMLElement(name: "status", stringValue: "success"))
+        if let collection {
+            root.addChild(XMLElement(name: "identifier", stringValue: collection.identifier))
+            root.addChild(
+                XMLElement(name: "created", stringValue: collection.created ? "true" : "false"))
+        }
+        return xmlString(from: root)
+    }
+
+    /// Generates XML for a failed album or folder operation.
+    static func collectionError(code: String, message: String) -> String {
+        let root = XMLElement(name: "collectionResult")
         root.addChild(XMLElement(name: "status", stringValue: "error"))
         root.addChild(XMLElement(name: "errorCode", stringValue: code))
         root.addChild(XMLElement(name: "errorMessage", stringValue: message))

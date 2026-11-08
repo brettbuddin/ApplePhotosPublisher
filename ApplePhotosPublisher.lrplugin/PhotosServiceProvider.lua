@@ -10,7 +10,9 @@ local LrDialogs = import 'LrDialogs'
 local LrErrors = import 'LrErrors'
 
 local pluginLoad = require 'PluginModuleLoader'
+local Albums = pluginLoad 'lib/Albums'
 local Importer = pluginLoad 'lib/Importer'
+local Shell = pluginLoad 'lib/Shell'
 local Time = pluginLoad 'lib/Time'
 local logger = pluginLoad 'lib/Logger'
 
@@ -28,6 +30,41 @@ local AUTHORIZATION_DIALOG_TITLE = 'Apple Photos Publisher for Lightroom Classic
 --- @param result table An error result from the importer
 local function showAuthorizationError(result)
     LrDialogs.message(AUTHORIZATION_DIALOG_TITLE, result.errorMessage, 'critical')
+end
+
+--- Fail a collection lifecycle callback so Lightroom offers to revert the change.
+---
+--- The SDK responds to an error here by asking whether to undo the local change or keep it
+--- while warning that the service was not updated. That is the right question for both a
+--- genuine failure and a refused confirmation dialog, so the difference is only in the
+--- wording, which the helper already supplies.
+---
+--- @param result table A result table from the helper
+--- @param what string What could not be done, for the fallback message
+local function failCollectionOperation(result, what)
+    if Importer.isAuthorizationError(result) then
+        showAuthorizationError(result)
+    end
+    local message = result.errorMessage or result.errorCode or ('Could not ' .. what)
+    if Importer.isUserCancelled(result) then
+        logger:info('User cancelled: ' .. what)
+    else
+        logger:error('Failed to ' .. what .. ': ' .. message)
+    end
+    error(message, 0)
+end
+
+--- Require a successful helper result, or fail the callback.
+local function requireSuccess(result, what)
+    if result.status ~= Importer.STATUS_SUCCESS then
+        failCollectionOperation(result, what)
+    end
+end
+
+--- Whether an info table from a lifecycle callback describes a collection set.
+local function isCollectionSet(info)
+    local collection = info.publishedCollection
+    return collection ~= nil and collection:type() == 'LrPublishedCollectionSet'
 end
 
 --- Lightroom publish/export service provider table.
@@ -74,7 +111,7 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
             title = 'Apple Photos',
             f:row {
                 f:static_text {
-                    title = 'Photos will be published to Apple Photos.\n\nPreviously published photos will be replaced and their album memberships restored.',
+                    title = 'Photos will be published to Apple Photos.\n\nCollections you add become albums, and collection sets become folders. The built-in Apple Photos collection files nothing: it just gets photos into your library. Previously published photos will be replaced and their album memberships restored.',
                     fill_horizontal = 1,
                 },
             },
@@ -83,8 +120,8 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
 end
 
 --- Configures collection behavior for the publish service.
---- Creates a non-deletable default collection named "Apple Photos".
---- Users can add collections but not collection sets (depth 0).
+--- Creates a non-deletable default collection named "Apple Photos". Users can add both
+--- collections and collection sets, which mirror to albums and folders in Photos.
 --- @param publishSettings table Current publish settings
 --- @return table Collection behavior configuration
 function provider.getCollectionBehaviorInfo(publishSettings)
@@ -92,9 +129,19 @@ function provider.getCollectionBehaviorInfo(publishSettings)
         defaultCollectionName = 'Apple Photos',
         defaultCollectionCanBeDeleted = false,
         canAddCollection = true,
-        maxCollectionSetDepth = 0,
+        -- maxCollectionSetDepth is deliberately absent, which allows collection sets and
+        -- lets them nest freely. Each one mirrors to a folder in Photos.
     }
 end
+
+--- Photos calls these albums and folders, so the panel's menus should too.
+provider.titleForPublishedCollection = 'Album'
+provider.titleForPublishedCollection_standalone = 'Album'
+provider.titleForPublishedCollectionSet = 'Folder'
+provider.titleForPublishedCollectionSet_standalone = 'Folder'
+provider.titleForPublishedSmartCollection = 'Smart Album'
+provider.titleForPublishedSmartCollection_standalone = 'Smart Album'
+provider.titleForGoToPublishedCollection = 'Show in Photos'
 
 --- Declares which metadata changes should mark a photo for republish.
 --- Triggers on: title, caption, keywords, GPS, date created, rating.
@@ -117,26 +164,33 @@ end
 --- For each successful import, stores the Photos identifier and sync timestamp
 --- as plugin metadata, records the published photo ID/URL on the rendition,
 --- and collects previous identifiers for later cleanup.
+---
+--- The batch carries its album, so the helper creates the album, imports the photos and
+--- sets their membership within the single launch publishing already costs.
+---
 --- @param progressScope LrProgressScope Active progress scope for cancellation and status
---- @param renditionPhotos table Array of {rendition, photo, path, previousIdentifier}
+--- @param renditionPhotos table Array of {rendition, photo, path, previousIdentifier, reuseIdentifier}
 --- @param catalog LrCatalog The active Lightroom catalog
+--- @param context table {album, publishService, collection, localCollectionId}
 --- @return table Array of old Apple Photos identifiers that were replaced
-local function importPhotoBatch(progressScope, renditionPhotos, catalog)
+--- @return table|nil The album the helper resolved, as {identifier, created, folders}
+local function importPhotoBatch(progressScope, renditionPhotos, catalog, context)
     local batchPhotos = {}
     for _, rp in ipairs(renditionPhotos) do
         table.insert(batchPhotos, {
             path = rp.path,
             previousIdentifier = rp.previousIdentifier,
+            reuseIdentifier = rp.reuseIdentifier,
         })
     end
 
     if progressScope:isCanceled() then
-        return {}
+        return {}, nil
     end
 
     progressScope:setCaption('Importing to Apple Photos...')
     logger:info('Starting batch import of ' .. #batchPhotos .. ' photos')
-    local batchResult = Importer.importPhotos(batchPhotos)
+    local batchResult = Importer.importPhotos(batchPhotos, context.album)
 
     local oldIdentifiers = {}
 
@@ -145,19 +199,41 @@ local function importPhotoBatch(progressScope, renditionPhotos, catalog)
             local result = batchResult.results[rp.path]
 
             if result and result.status == 'success' then
-                catalog:withWriteAccessDo('Store Photos identifier', function()
-                    rp.photo:setPropertyForPlugin(_PLUGIN, PROP_LOCAL_IDENTIFIER, result.localIdentifier)
-                    rp.photo:setPropertyForPlugin(_PLUGIN, PROP_SYNC_DATE, Time.nowISO8601())
-                end)
-
                 rp.rendition:recordPublishedPhotoId(result.localIdentifier)
                 rp.rendition:recordPublishedPhotoUrl(result.url)
 
-                if rp.previousIdentifier and rp.previousIdentifier ~= '' then
-                    table.insert(oldIdentifiers, rp.previousIdentifier)
+                -- Plugin metadata goes through the private gate, and only when something
+                -- actually changed.
+                --
+                -- Writing to a photo marks it changed for every collection publishing it,
+                -- not just this one. The collection being published clears that with
+                -- recordPublishedPhotoId above, but the others cannot, so they were left
+                -- showing photos as needing a republish. An ordinary write also lands on the
+                -- undo stack, which defeats recordPublishedPhotoId for this collection too.
+                -- photosSyncDate was a fresh timestamp every run, so both happened on every
+                -- publish rather than settling.
+                local stored = rp.photo:getPropertyForPlugin(_PLUGIN, PROP_LOCAL_IDENTIFIER)
+                if stored ~= result.localIdentifier then
+                    catalog:withPrivateWriteAccessDo(function()
+                        rp.photo:setPropertyForPlugin(_PLUGIN, PROP_LOCAL_IDENTIFIER, result.localIdentifier)
+                        rp.photo:setPropertyForPlugin(_PLUGIN, PROP_SYNC_DATE, Time.nowISO8601())
+                    end)
                 end
 
-                logger:info('Published photo -> ' .. result.localIdentifier)
+                if rp.previousIdentifier and rp.previousIdentifier ~= ''
+                    and rp.previousIdentifier ~= result.localIdentifier then
+                    table.insert(oldIdentifiers, rp.previousIdentifier)
+                    -- Other collections still name the asset we just replaced. Point them at
+                    -- the new one before it is deleted out from under them.
+                    Albums.repointSiblings(catalog, context.publishService, rp.previousIdentifier,
+                        result.localIdentifier, result.url, context.localCollectionId)
+                end
+
+                if result.reused then
+                    logger:info('Reused existing asset -> ' .. result.localIdentifier)
+                else
+                    logger:info('Published photo -> ' .. result.localIdentifier)
+                end
             else
                 local errorMsg = 'Unknown error'
                 if result then
@@ -178,7 +254,7 @@ local function importPhotoBatch(progressScope, renditionPhotos, catalog)
         end
     end
 
-    return oldIdentifiers
+    return oldIdentifiers, batchResult.album
 end
 
 --- Deletes previously-published photo versions from Apple Photos.
@@ -202,9 +278,11 @@ local function deleteOldVersions(progressScope, oldIdentifiers)
 end
 
 --- Main publish entry point called by Lightroom after photos are rendered.
---- Waits for each rendition to finish rendering, collects successful results
---- with their file paths and previous identifiers, batch-imports them into
---- Apple Photos, then deletes any old versions that were replaced.
+---
+--- Runs two passes over the renditions. The first decides which photos can keep the asset
+--- they already have, because `skipRender` has to be called before rendering starts. The
+--- second collects the rendered files and hands the batch, with its album, to the helper.
+---
 --- @param functionContext LrFunctionContext Lightroom function context for cleanup
 --- @param exportContext LrExportContext Context providing renditions and progress
 function provider.processRenderedPhotos(functionContext, exportContext)
@@ -212,6 +290,29 @@ function provider.processRenderedPhotos(functionContext, exportContext)
     local progressScope = exportContext:configureProgress({
         title = string.format('Publishing %d photos to Apple Photos', nPhotos),
     })
+
+    local catalog = LrApplication.activeCatalog()
+    local publishService = exportContext.publishService
+    local collection = exportContext.publishedCollection
+    local info = exportContext.publishedCollectionInfo
+    local localCollectionId = collection and collection.localIdentifier
+
+    -- Decide reuse before rendering begins, since skipRender is only honored until then.
+    -- A photo that is merely joining another collection keeps its asset: replacing it would
+    -- leave the collections already publishing it pointing at something deleted.
+    local reuseByPhoto = {}
+    if publishService then
+        for _, rendition in exportContext.exportSession:renditions() do
+            if not rendition.publishedPhotoId then
+                local recorded = rendition.photo:getPropertyForPlugin(_PLUGIN, PROP_LOCAL_IDENTIFIER)
+                local reusable = Albums.reusableIdentifier(publishService, recorded, localCollectionId)
+                if reusable then
+                    reuseByPhoto[rendition.photo.localIdentifier] = reusable
+                    rendition:skipRender()
+                end
+            end
+        end
+    end
 
     -- Render Exports
     local renditions = {}
@@ -221,22 +322,33 @@ function provider.processRenderedPhotos(functionContext, exportContext)
         end
         progressScope:setPortionComplete(i - 1, nPhotos)
 
-        local success, path = rendition:waitForRender()
-
-        if success then
-            local previousIdentifier = rendition.publishedPhotoId
-            if not previousIdentifier or previousIdentifier == '' then
-                previousIdentifier = rendition.photo:getPropertyForPlugin(_PLUGIN, PROP_LOCAL_IDENTIFIER)
-            end
-
+        local reuseIdentifier = reuseByPhoto[rendition.photo.localIdentifier]
+        if reuseIdentifier then
+            -- Nothing was rendered, so there is no file; the helper files the asset instead.
             table.insert(renditions, {
                 rendition = rendition,
                 photo = rendition.photo,
-                path = path,
-                previousIdentifier = previousIdentifier,
+                path = rendition.destinationPath,
+                reuseIdentifier = reuseIdentifier,
             })
         else
-            rendition:uploadFailed(path)
+            local success, path = rendition:waitForRender()
+
+            if success then
+                local previousIdentifier = rendition.publishedPhotoId
+                if not previousIdentifier or previousIdentifier == '' then
+                    previousIdentifier = rendition.photo:getPropertyForPlugin(_PLUGIN, PROP_LOCAL_IDENTIFIER)
+                end
+
+                table.insert(renditions, {
+                    rendition = rendition,
+                    photo = rendition.photo,
+                    path = path,
+                    previousIdentifier = previousIdentifier,
+                })
+            else
+                rendition:uploadFailed(path)
+            end
         end
     end
     if #renditions == 0 or progressScope:isCanceled() then
@@ -244,20 +356,49 @@ function provider.processRenderedPhotos(functionContext, exportContext)
     end
 
     -- Import into Apple Photos
-    local catalog = LrApplication.activeCatalog()
-    local oldIdentifiers = importPhotoBatch(progressScope, renditions, catalog)
+    local oldIdentifiers, album = importPhotoBatch(progressScope, renditions, catalog, {
+        album = collection and Albums.albumTarget(collection) or nil,
+        publishService = publishService,
+        collection = collection,
+        localCollectionId = localCollectionId,
+    })
+
+    -- Record where Photos put things, so the next publish finds the same album rather than
+    -- building another one beside it.
+    if album and album.identifier then
+        exportContext.exportSession:recordRemoteCollectionId(album.identifier)
+        local uuid = Albums.albumUuid(album.identifier)
+        if uuid then
+            exportContext.exportSession:recordRemoteCollectionUrl('photos:albums?albumUuid=' .. uuid)
+        end
+        if album.created then
+            logger:info('Created album for ' .. info.name .. ' -> ' .. album.identifier)
+        else
+            logger:info('Using existing album for ' .. info.name .. ' -> ' .. album.identifier)
+        end
+        if #oldIdentifiers > 0 then
+            logger:info('Replaced ' .. #oldIdentifiers .. ' assets; sibling lookup '
+                .. Albums.describeLastScan())
+        end
+        Albums.recordFolderIdentifiers(catalog, collection, album.folders)
+    end
+
     deleteOldVersions(progressScope, oldIdentifiers)
 
     progressScope:done()
 end
 
 --- Called when the user removes photos from a published collection.
---- Deletes the photos from Apple Photos, clears plugin metadata
---- (photosLocalIdentifier and photosSyncDate) from the catalog, and
---- notifies Lightroom of each successful deletion via deletedCallback.
+---
+--- Removal is partitioned rather than applied uniformly. A photo still published by another
+--- collection only leaves this collection's album, which is silent. A photo nothing else
+--- publishes has its asset deleted, which removes it from every album anyway, so there is no
+--- membership step and no way for a refused deletion to leave it stripped from an album it is
+--- still published in.
+---
 --- @param publishSettings table Current publish settings
---- @param photoIDs table Array of Apple Photos local identifiers to delete
---- @param deletedCallback function Called with each photoID after successful deletion
+--- @param photoIDs table Array of Apple Photos local identifiers
+--- @param deletedCallback function Called with each photoID once it is dealt with
 --- @param localCollectionID number Lightroom local identifier for the published collection
 function provider.deletePhotosFromPublishedCollection(publishSettings, photoIDs, deletedCallback,
                                                       localCollectionID)
@@ -265,20 +406,67 @@ function provider.deletePhotosFromPublishedCollection(publishSettings, photoIDs,
         return
     end
 
-    logger:info('Deleting ' .. #photoIDs .. ' photos from published collection')
-    local deleteResult = Importer.deletePhotos(photoIDs)
+    local catalog = LrApplication.activeCatalog()
+    local collection = catalog:getPublishedCollectionByLocalIdentifier(localCollectionID)
+    local publishService = collection and collection:getService()
 
+    -- The default collection has no album, whatever identifier it may still carry from
+    -- before it stopped mirroring. Reading that stale identifier here would try to remove
+    -- photos from an album nothing manages, and fail outright once it is deleted in Photos.
+    local albumIdentifier = nil
+    if collection and not Albums.isDefaultCollection(collection) then
+        albumIdentifier = collection:getRemoteId()
+    end
+
+    local orphaned = {}
+    local stillPublished = {}
+    for _, photoID in ipairs(photoIDs) do
+        if publishService
+            and Albums.isPublishedElsewhere(publishService, photoID, localCollectionID) then
+            table.insert(stillPublished, photoID)
+        else
+            table.insert(orphaned, photoID)
+        end
+    end
+    logger:info('Removing ' .. #photoIDs .. ' photos: ' .. #orphaned .. ' orphaned, '
+        .. #stillPublished .. ' published elsewhere')
+
+    -- Photos that live on elsewhere only leave this album.
+    if #stillPublished > 0 and albumIdentifier and albumIdentifier ~= '' then
+        local removeResult = Importer.removeFromAlbum(albumIdentifier, stillPublished)
+        if removeResult.status ~= Importer.STATUS_SUCCESS then
+            local message = removeResult.errorMessage or removeResult.errorCode or 'Remove failed'
+            logger:error('Failed to remove photos from the album: ' .. message)
+            if Importer.isAuthorizationError(removeResult) then
+                showAuthorizationError(removeResult)
+                return
+            end
+            LrErrors.throwUserError(message)
+        end
+        for _, photoID in ipairs(stillPublished) do
+            deletedCallback(photoID)
+        end
+    elseif #stillPublished > 0 then
+        -- No album to remove them from, so there is nothing to do but acknowledge.
+        for _, photoID in ipairs(stillPublished) do
+            deletedCallback(photoID)
+        end
+    end
+
+    if #orphaned == 0 then
+        return
+    end
+
+    local deleteResult = Importer.deletePhotos(orphaned)
     if deleteResult.status == Importer.STATUS_SUCCESS then
         local photoIDSet = {}
-        for _, id in ipairs(photoIDs) do
+        for _, id in ipairs(orphaned) do
             photoIDSet[id] = true
         end
 
-        local catalog = LrApplication.activeCatalog()
-        local collection = catalog:getPublishedCollectionByLocalIdentifier(localCollectionID)
         if collection then
             local publishedPhotos = collection:getPublishedPhotos()
-            catalog:withWriteAccessDo('Clear Photos metadata', function()
+            catalog:withPrivateWriteAccessDo(function()
                 for _, publishedPhoto in ipairs(publishedPhotos) do
                     if photoIDSet[publishedPhoto:getRemoteId()] then
                         local photo = publishedPhoto:getPhoto()
@@ -289,21 +477,147 @@ function provider.deletePhotosFromPublishedCollection(publishSettings, photoIDs,
             end)
         end
 
-        for _, photoID in ipairs(photoIDs) do
+        for _, photoID in ipairs(orphaned) do
             deletedCallback(photoID)
         end
         logger:info('Deleted ' .. deleteResult.deletedCount .. ' photos')
     else
         local errorMsg = deleteResult.errorMessage or deleteResult.errorCode or 'Delete failed'
         logger:error('Failed to delete photos: ' .. errorMsg)
-        if Importer.isAuthorizationError(deleteResult) then
-            -- Nothing was passed to deletedCallback, so Lightroom keeps the
-            -- photos in the collection for a retry once access is granted.
-            showAuthorizationError(deleteResult)
+        if Importer.isAuthorizationError(deleteResult) or Importer.isUserCancelled(deleteResult) then
+            -- Nothing was passed to deletedCallback for these, so Lightroom keeps them in
+            -- the collection for a retry once access is granted or the user agrees.
+            if Importer.isAuthorizationError(deleteResult) then
+                showAuthorizationError(deleteResult)
+            end
             return
         end
         LrErrors.throwUserError(errorMsg)
     end
+end
+
+--- Called when the user renames a published collection or collection set.
+--- @param publishSettings table Current publish settings
+--- @param info table Lifecycle info, including remoteId and the new name
+function provider.renamePublishedCollection(publishSettings, info)
+    if not info.remoteId or info.remoteId == '' then
+        -- Never published, so Photos has nothing under this name yet.
+        return
+    end
+
+    if isCollectionSet(info) then
+        requireSuccess(Importer.renameFolder(info.remoteId, info.name),
+            'rename the folder in Apple Photos')
+        logger:info('Renamed Photos folder to ' .. info.name)
+    else
+        requireSuccess(Importer.renameAlbum(info.remoteId, info.name),
+            'rename the album in Apple Photos')
+        logger:info('Renamed Photos album to ' .. info.name)
+    end
+end
+
+--- Called when the user deletes a published collection or collection set.
+---
+--- Only the container goes; its photos stay in the library unless nothing else publishes
+--- them. Deleting a folder takes its child albums with it, which matches Lightroom deleting
+--- a collection set's children, and still leaves every asset alone.
+---
+--- @param publishSettings table Current publish settings
+--- @param info table Lifecycle info, including remoteId
+function provider.deletePublishedCollection(publishSettings, info)
+    if not info.remoteId or info.remoteId == '' then
+        return
+    end
+
+    -- Lightroom hands over the photos it published through this collection. The field is
+    -- undocumented but the Flickr sample relies on it, so use it when it is there and settle
+    -- for removing only the container when it is not.
+    if info.photoIds and #info.photoIds > 0 then
+        local publishService = info.publishService
+        local localId = info.publishedCollection and info.publishedCollection.localIdentifier
+        local orphaned = {}
+        for _, photoID in ipairs(info.photoIds) do
+            if not (publishService
+                and Albums.isPublishedElsewhere(publishService, photoID, localId)) then
+                table.insert(orphaned, photoID)
+            end
+        end
+        if #orphaned > 0 then
+            logger:info('Deleting ' .. #orphaned .. ' photos with the collection')
+            requireSuccess(Importer.deletePhotos(orphaned), 'delete the photos from Apple Photos')
+        end
+    end
+
+    if isCollectionSet(info) then
+        requireSuccess(Importer.deleteFolder(info.remoteId),
+            'delete the folder from Apple Photos')
+    else
+        requireSuccess(Importer.deleteAlbum(info.remoteId),
+            'delete the album from Apple Photos')
+    end
+    logger:info('Deleted Photos container ' .. info.remoteId)
+end
+
+--- Called when the user drags a published collection or set to a new parent.
+--- @param publishSettings table Current publish settings
+--- @param info table Lifecycle info, including remoteId
+function provider.reparentPublishedCollection(publishSettings, info)
+    if info.isDefaultCollection then
+        -- No album to move. A recorded identifier may survive from before the default
+        -- collection stopped mirroring, and acting on it would move a stale album.
+        return
+    end
+
+    if not info.remoteId or info.remoteId == '' then
+        return
+    end
+
+    local collection = info.publishedCollection
+    if not collection then
+        return
+    end
+
+    local catalog = LrApplication.activeCatalog()
+    local parent, failure = Albums.ensureFolderChain(catalog, collection)
+    if failure then
+        failCollectionOperation(failure, 'create the folder in Apple Photos')
+    end
+
+    requireSuccess(Importer.moveCollection(info.remoteId, parent),
+        'move the album in Apple Photos')
+    logger:info('Moved ' .. info.name .. ' to ' .. (parent or 'the top level'))
+end
+
+--- Called for the "Show in Photos" context-menu item.
+--- @param publishSettings table Current publish settings
+--- @param info table Lifecycle info, including remoteId
+function provider.goToPublishedCollection(publishSettings, info)
+    if info.isDefaultCollection then
+        LrDialogs.message('No album for this collection',
+            'Publishing here puts photos in your Photos library without filing them in an '
+            .. 'album. Add them to a collection to get an album.', 'info')
+        return
+    end
+
+    local uuid = Albums.albumUuid(info.remoteId)
+    if not uuid then
+        LrDialogs.message('Not published yet',
+            'Publish this album once and Apple Photos will have something to show.', 'info')
+        return
+    end
+    Shell.openUrl('photos:albums?albumUuid=' .. uuid)
+end
+
+--- Validates a collection name before Lightroom accepts it.
+--- Only cheap checks belong here; anything Photos might reject is reported when we try.
+--- @param proposedName string The name as typed
+--- @return boolean Whether the name is acceptable
+--- @return string|nil Why it is not
+function provider.validatePublishedCollectionName(proposedName)
+    if not proposedName or proposedName:match('^%s*$') then
+        return false, 'An album needs a name.'
+    end
+    return true
 end
 
 return provider

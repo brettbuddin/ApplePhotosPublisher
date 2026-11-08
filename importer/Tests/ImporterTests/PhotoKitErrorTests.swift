@@ -30,4 +30,32 @@ struct PhotoKitErrorTests {
         let message = try #require(PhotoKitError.writeAuthorizationRestricted.errorDescription)
         #expect(!message.contains("System Settings"))
     }
+
+    /// A refused confirmation dialog has to stay distinguishable from a genuine failure,
+    /// because the plugin words them differently.
+    @Test func userCancelledHasItsOwnCodeAndMessage() throws {
+        let error = PhotoKitError.userCancelled(operation: "deleting the album")
+        #expect(error.code == "USER_CANCELLED")
+        let message = try #require(error.errorDescription)
+        #expect(message.contains("cancelled"))
+        #expect(message.contains("deleting the album"))
+        // PhotoKit's own text for 3072 says only that the operation could not be completed.
+        #expect(!message.contains("couldn’t be completed"))
+    }
+
+    @Test func collectionErrorCodes() {
+        #expect(PhotoKitError.folderNotFound(identifier: "f").code == "FOLDER_NOT_FOUND")
+        #expect(PhotoKitError.operationNotPermitted(identifier: "a", operation: "renaming").code
+            == "OPERATION_NOT_PERMITTED")
+        #expect(PhotoKitError.createCollectionFailed(name: "a", reason: "r").code
+            == "CREATE_COLLECTION_FAILED")
+        #expect(PhotoKitError.renameCollectionFailed(identifier: "a", name: "b", reason: "r").code
+            == "RENAME_COLLECTION_FAILED")
+        #expect(PhotoKitError.deleteCollectionFailed(identifier: "a", reason: "r").code
+            == "DELETE_COLLECTION_FAILED")
+        #expect(PhotoKitError.moveCollectionFailed(identifier: "a", reason: "r").code
+            == "MOVE_COLLECTION_FAILED")
+        #expect(PhotoKitError.removeFromAlbumFailed(albumID: "a", reason: "r").code
+            == "REMOVE_FROM_ALBUM_FAILED")
+    }
 }

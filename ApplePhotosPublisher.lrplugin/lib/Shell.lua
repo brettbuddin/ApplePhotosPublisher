@@ -20,6 +20,15 @@ function M.escape(str)
     return "'" .. str:gsub("'", "'\\''") .. "'"
 end
 
+--- Hand a URL to Launch Services.
+--- LrHttp.openUrlInBrowser targets the user's web browser, which is the wrong handler for
+--- the photos: scheme; `open` routes a custom scheme to whichever app claims it.
+--- @param url string The URL to open
+--- @return number The raw status from LrTasks.execute
+function M.openUrl(url)
+    return LrTasks.execute('open ' .. M.escape(url))
+end
+
 --- Read and remove a capture file after the app exits.
 local function readCapture(path)
     local output = ''

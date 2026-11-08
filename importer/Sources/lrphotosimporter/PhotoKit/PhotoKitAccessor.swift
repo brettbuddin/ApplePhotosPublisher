@@ -63,12 +63,46 @@ final class PhotoKitAccessor: PhotoLibrary, @unchecked Sendable {
         }
     }
 
+    // MARK: - Change Transactions
+
+    /// Runs a change transaction, translating a dismissed confirmation dialog into
+    /// ``PhotoKitError/userCancelled(operation:)``.
+    ///
+    /// Deleting an album or a folder always raises that dialog, so a refusal has to stay
+    /// distinguishable from a genuine failure. PhotoKit reports it as
+    /// `PHPhotosErrorUserCancelled`, whose own message is only "The operation couldn't be
+    /// completed", so the description has to come from us.
+    func perform(_ operation: String, _ changes: @escaping () -> Void) async throws {
+        do {
+            try await PHPhotoLibrary.shared().performChanges(changes)
+        } catch let error as NSError
+            where error.domain == PHPhotosErrorDomain && error.code == PHPhotosError.userCancelled.rawValue {
+            throw PhotoKitError.userCancelled(operation: operation)
+        }
+    }
+
+    /// Throws unless Photos permits `operation` on `collection`.
+    func require(
+        _ collection: PHCollection, _ operation: PHCollectionEditOperation, _ name: String
+    ) throws {
+        guard collection.canPerform(operation) else {
+            throw PhotoKitError.operationNotPermitted(
+                identifier: collection.localIdentifier, operation: name
+            )
+        }
+    }
+
     // MARK: - Asset Operations
 
     /// Fetch an asset by its local identifier
     func fetchAsset(withIdentifier identifier: String) async -> PHAsset? {
         let result = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
         return result.firstObject
+    }
+
+    /// Reports whether an asset is still present in the library
+    func assetExists(identifier: String) async -> Bool {
+        await isAssetAccessible(identifier: identifier)
     }
 
     /// Check if an asset is accessible
@@ -179,17 +213,18 @@ final class PhotoKitAccessor: PhotoLibrary, @unchecked Sendable {
         if identifiers.isEmpty { return }
 
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
+        // An asset that is already absent is the state the caller asked for. Orphan checks
+        // and shared assets make a second delete of the same identifier ordinary.
         guard assets.count > 0 else { // swiftlint:disable:this empty_count
-            throw PhotoKitError.deleteFailed(
-                identifiers: identifiers,
-                reason: "No assets found with provided identifiers"
-            )
+            return
         }
 
         do {
-            try await PHPhotoLibrary.shared().performChanges {
+            try await perform("deleting photos") {
                 PHAssetChangeRequest.deleteAssets(assets)
             }
+        } catch let error as PhotoKitError {
+            throw error
         } catch {
             throw PhotoKitError.deleteFailed(
                 identifiers: identifiers,

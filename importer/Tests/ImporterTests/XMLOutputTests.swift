@@ -102,4 +102,27 @@ struct XMLOutputTests {
         #expect(root.elements(forName: "status").first?.stringValue == "error")
         #expect(root.elements(forName: "errorCode").first?.stringValue == "AUTH")
     }
+
+    private func parseCollectionResult(_ xml: String) throws -> XMLElement {
+        try #require(try XMLDocument(xmlString: xml).rootElement())
+    }
+
+    @Test func collectionResultXML() throws {
+        let created = try parseCollectionResult(
+            XMLOutput.collectionSuccess(collection: CollectionRef(identifier: "x", created: true)))
+        #expect(created.name == "collectionResult")
+        #expect(created.elements(forName: "status").first?.stringValue == "success")
+        #expect(created.elements(forName: "identifier").first?.stringValue == "x")
+        #expect(created.elements(forName: "created").first?.stringValue == "true")
+
+        let plain = try parseCollectionResult(XMLOutput.collectionSuccess())
+        #expect(plain.elements(forName: "status").first?.stringValue == "success")
+        #expect(plain.elements(forName: "identifier").isEmpty)
+
+        let failed = try parseCollectionResult(
+            XMLOutput.collectionError(code: "USER_CANCELLED", message: "you cancelled it"))
+        #expect(failed.elements(forName: "status").first?.stringValue == "error")
+        #expect(failed.elements(forName: "errorCode").first?.stringValue == "USER_CANCELLED")
+        #expect(failed.elements(forName: "errorMessage").first?.stringValue == "you cancelled it")
+    }
 }
