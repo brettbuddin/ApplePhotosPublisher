@@ -40,6 +40,10 @@ local AUTHORIZATION_ERROR_CODES = {
 --- outcome and has to be worded differently from a fault.
 local USER_CANCELLED = 'USER_CANCELLED'
 
+--- Error code the helper returns for a photo whose reusable asset has been deleted in
+--- Photos, leaving a skipped render with nothing to import.
+local REUSE_MISSING = 'REUSE_MISSING'
+
 --- Names for the signals a crashed importer is likely to die from.
 local SIGNAL_NAMES = {
     [1] = 'SIGHUP',
@@ -388,6 +392,18 @@ end
 --- @return boolean
 function M.isUserCancelled(result)
     return result.status == STATUS_ERROR and result.errorCode == USER_CANCELLED
+end
+
+--- Whether a photo was kept back for an asset that has since been deleted in Photos.
+---
+--- The render is skipped for a photo whose asset is already current, so there is no file to
+--- import when that asset turns out to be gone. The run cannot recover, but the identifier
+--- that led nowhere can be dropped so the next one does.
+---
+--- @param result table A per-photo result from importPhotos
+--- @return boolean
+function M.isReuseMissing(result)
+    return result.status == STATUS_ERROR and result.errorCode == REUSE_MISSING
 end
 
 --- Status value indicating a successful operation

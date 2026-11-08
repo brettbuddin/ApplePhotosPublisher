@@ -259,12 +259,22 @@ struct ImportCommand: AsyncParsableCommand {
         reuseIdentifier: String? = nil
     ) async -> SingleImportResult {
         // Check reuse before the file: a skipped render leaves no file to find.
-        if let reuseIdentifier, !reuseIdentifier.isEmpty,
-           await photoKit.assetExists(identifier: reuseIdentifier.uuidPrefix) {
-            return .success(
-                path: path, localIdentifier: reuseIdentifier,
-                albumsRestored: [], favoriteRestored: false, reused: true
-            )
+        if let reuseIdentifier, !reuseIdentifier.isEmpty {
+            if await photoKit.assetExists(identifier: reuseIdentifier.uuidPrefix) {
+                return .success(
+                    path: path, localIdentifier: reuseIdentifier,
+                    albumsRestored: [], favoriteRestored: false, reused: true
+                )
+            }
+            // The asset was there when the render was skipped on the strength of it. Say so
+            // plainly rather than reporting the missing file, which is a consequence.
+            if !FileManager.default.fileExists(atPath: path) {
+                return .error(
+                    path: path, code: "REUSE_MISSING",
+                    message: "The copy of this photo in Photos has been deleted. "
+                        + "Publish again to import a new one."
+                )
+            }
         }
 
         let fileURL = URL(fileURLWithPath: path)

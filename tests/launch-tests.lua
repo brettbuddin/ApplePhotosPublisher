@@ -182,7 +182,13 @@ assert(Importer.isUserCancelled({ status = 'error', errorCode = 'USER_CANCELLED'
 assert(not Importer.isUserCancelled({ status = 'error', errorCode = 'DELETE_FAILED' }))
 assert(not Importer.isUserCancelled({ status = 'success' }))
 assert(not Importer.isAuthorizationError({ status = 'error', errorCode = 'USER_CANCELLED' }))
-print('PASS: album command arguments, empty removal, cancellation classification')
+
+-- A photo whose reusable asset has been deleted needs its identifier dropped rather than a
+-- retry, since the run that reported it skipped the render.
+assert(Importer.isReuseMissing({ status = 'error', errorCode = 'REUSE_MISSING' }))
+assert(not Importer.isReuseMissing({ status = 'error', errorCode = 'FILE_NOT_FOUND' }))
+assert(not Importer.isReuseMissing({ status = 'success' }))
+print('PASS: album command arguments, empty removal, cancellation and reuse classification')
 
 if arg[1] == '--integration' then
     -- Execute the real launch path with non-mutating commands only. Test a

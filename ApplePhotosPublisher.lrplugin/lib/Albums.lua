@@ -4,11 +4,17 @@
     Maps Lightroom's published collections onto Apple Photos albums.
 
     Lightroom only ever reports deltas, and it reports them per collection, so this module
-    also answers the questions a delta cannot: which collections publish a given photo, and
-    what an album's membership ought to be.
+    also answers the questions a delta cannot: which collections publish a given photo, which
+    asset that photo has, and what an album's membership ought to be.
+
+    Those questions are all keyed on the photo rather than on an Apple Photos identifier.
+    Keying them on the identifier made every answer conditional on the collections already
+    agreeing about the photo, so the moment two of them disagreed nothing could see the
+    disagreement, let alone repair it. Assets.lua has the rest of that story.
 ]]
 
 local pluginLoad = require 'PluginModuleLoader'
+local Assets = pluginLoad 'lib/Assets'
 local Importer = pluginLoad 'lib/Importer'
 local logger = pluginLoad 'lib/Logger'
 
@@ -53,56 +59,116 @@ function M.allCollections(publishService)
     return publishService:getChildCollections()
 end
 
---- Every published collection in the service that publishes a photo with this remote id.
+--- A deep link to an asset, shown in the album it was published through.
+--- @param albumIdentifier string|nil The album's local identifier
+--- @param assetIdentifier string The asset's local identifier
+--- @return string The photos: URL
+function M.assetUrl(albumIdentifier, assetIdentifier)
+    local assetUuid = M.albumUuid(assetIdentifier)
+    local albumUuid = M.albumUuid(albumIdentifier)
+    if albumUuid then
+        return 'photos:albums?albumUuid=' .. albumUuid .. '&assetUuid=' .. assetUuid
+    end
+    return 'photos://asset?assetLocalIdentifier=' .. assetUuid
+end
+
+--- Index every photo this plugin publishes, keyed by the photo.
 ---
---- Walks the service rather than calling `photo:getContainedPublishedCollections()`, which
+--- Walks the services rather than calling `photo:getContainedPublishedCollections()`, which
 --- omits smart published collections. Missing one of those would let us delete an asset a
 --- smart collection still points at.
 ---
---- @param publishService LrPublishService
---- @param remoteId string The Apple Photos identifier to look for
---- @return table Array of {collection, publishedPhoto}
-function M.publishedBy(publishService, remoteId)
-    local found = {}
-    if not publishService or not remoteId or remoteId == '' then
-        logger:info('publishedBy: no service or id, nothing to look through')
-        return found
-    end
+--- Built once per operation. The questions here used to be answered by walking the services
+--- per photo, which cost a full pass over every published photo in the plugin for each photo
+--- in the batch.
+---
+--- Spans every service of the plugin, not just the one being published, because the asset is
+--- recorded on the photo and a photo published by two services therefore has one asset
+--- between them. The helper only ever works on the system photo library, so two services
+--- really are two views of the same place.
+---
+--- @param catalog LrCatalog The active catalog
+--- @return table Index with byPhoto, byAsset, collections and photos
+function M.buildIndex(catalog)
+    local index = { collections = 0, photos = 0, byPhoto = {}, byAsset = {} }
 
-    local collections = M.allCollections(publishService)
-    local scanned = 0
-    for _, collection in ipairs(collections) do
-        for _, publishedPhoto in ipairs(collection:getPublishedPhotos()) do
-            scanned = scanned + 1
-            if publishedPhoto:getRemoteId() == remoteId then
-                table.insert(found, { collection = collection, publishedPhoto = publishedPhoto })
+    for _, service in ipairs(catalog:getPublishServices(_PLUGIN.id)) do
+        for _, collection in ipairs(M.allCollections(service)) do
+            index.collections = index.collections + 1
+            for _, publishedPhoto in ipairs(collection:getPublishedPhotos()) do
+                local photo = publishedPhoto:getPhoto()
+                local key = photo.localIdentifier
+                local remoteId = publishedPhoto:getRemoteId()
+                index.photos = index.photos + 1
+
+                local entries = index.byPhoto[key]
+                if not entries then
+                    entries = {}
+                    index.byPhoto[key] = entries
+                end
+                table.insert(entries, {
+                    collection = collection,
+                    publishedPhoto = publishedPhoto,
+                    remoteId = remoteId,
+                    photo = photo,
+                })
+
+                if remoteId and remoteId ~= '' then
+                    local holder = index.byAsset[remoteId]
+                    if not holder then
+                        holder = { photo = photo, keys = {} }
+                        index.byAsset[remoteId] = holder
+                    end
+                    holder.keys[key] = true
+                end
             end
         end
     end
 
-    M.lastScan = { collections = #collections, photos = scanned, matches = #found }
-    return found
+    return index
 end
 
---- One line describing what the last service walk actually saw.
---- Called once per publish rather than per photo, so the log stays readable.
+--- One line describing what an index actually covers.
+--- @param index table An index from `buildIndex`
 --- @return string
-function M.describeLastScan()
-    local scan = M.lastScan
-    if not scan then
-        return 'no service walk happened'
+function M.describeIndex(index)
+    if not index then
+        return 'no index was built'
     end
-    return 'walked ' .. scan.collections .. ' collections, '
-        .. scan.photos .. ' published photos, ' .. scan.matches .. ' matched'
+    return index.collections .. ' collections, ' .. index.photos .. ' published photos'
+end
+
+--- Every collection in the plugin that publishes this photo.
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @return table Array of {collection, publishedPhoto, remoteId, photo}
+function M.entries(index, photo)
+    if not index or not photo then
+        return {}
+    end
+    return index.byPhoto[photo.localIdentifier] or {}
+end
+
+--- The photo an asset belongs to, as far as the catalog knows.
+--- Used to answer a removal, which names assets rather than photos.
+--- @param index table An index from `buildIndex`
+--- @param remoteId string An Apple Photos identifier
+--- @return LrPhoto|nil
+function M.photoFor(index, remoteId)
+    if not index or not remoteId or remoteId == '' then
+        return nil
+    end
+    local holder = index.byAsset[remoteId]
+    return holder and holder.photo or nil
 end
 
 --- Whether any collection other than the given one still publishes this photo.
---- @param publishService LrPublishService
---- @param remoteId string The Apple Photos identifier
---- @param excludeLocalId number Local identifier of the collection to ignore
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @param excludeLocalId number|nil Local identifier of the collection to ignore
 --- @return boolean
-function M.isPublishedElsewhere(publishService, remoteId, excludeLocalId)
-    for _, entry in ipairs(M.publishedBy(publishService, remoteId)) do
+function M.isPublishedElsewhere(index, photo, excludeLocalId)
+    for _, entry in ipairs(M.entries(index, photo)) do
         if entry.collection.localIdentifier ~= excludeLocalId then
             return true
         end
@@ -110,80 +176,151 @@ function M.isPublishedElsewhere(publishService, remoteId, excludeLocalId)
     return false
 end
 
---- Point every collection that referenced an old asset at its replacement.
+--- The asset the plugin last knew this photo by.
 ---
---- Replacing a photo's asset leaves the other collections publishing it holding an
+--- The identifier on the photo, falling back to whatever its collections hold. A publish
+--- records the collection before the photo, so that is the one direction in which the two can
+--- be left out of step, and the fallback is what keeps a photo in that state from being
+--- republished as though it had never been in Photos at all: its album memberships and
+--- favorite status are read off this.
+---
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @return string|nil
+function M.lastKnownAsset(index, photo)
+    local identifier = Assets.identifier(photo)
+    if identifier then
+        return identifier
+    end
+    for _, entry in ipairs(M.entries(index, photo)) do
+        if entry.remoteId and entry.remoteId ~= '' then
+            return entry.remoteId
+        end
+    end
+    return nil
+end
+
+--- Whether the asset this photo has can be published as it stands.
+---
+--- A photo joining another collection does not need a new asset: the one it already has is
+--- current, and replacing it costs a render, an import and a delete to arrive back where it
+--- started. Lightroom's edited flag is what reports that, so a collection has to be publishing
+--- the photo already for anything to vouch for the asset. A photo whose only claim is the
+--- identifier on itself gets a fresh asset, since nothing says that identifier predates the
+--- last edit.
+---
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @return boolean
+function M.assetIsCurrent(index, photo)
+    local entries = M.entries(index, photo)
+    if #entries == 0 then
+        return false
+    end
+    for _, entry in ipairs(entries) do
+        if entry.publishedPhoto:getEditedFlag() then
+            -- A collection is waiting to republish this photo, so its asset is stale.
+            return false
+        end
+    end
+    return true
+end
+
+--- The collections holding an identifier other than the one the photo now has.
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @param identifier string The asset the photo now has
+--- @param excludeLocalId number|nil Collection Lightroom has already updated itself
+--- @return table Array of index entries
+function M.staleEntries(index, photo, identifier, excludeLocalId)
+    local stale = {}
+    for _, entry in ipairs(M.entries(index, photo)) do
+        if entry.collection.localIdentifier ~= excludeLocalId
+            and entry.remoteId ~= identifier then
+            table.insert(stale, entry)
+        end
+    end
+    return stale
+end
+
+--- Every asset the plugin holds for this photo apart from the one it now has.
+---
+--- Both the identifier on the photo and the identifiers on its collections are read, so a
+--- publish clears up assets left by a collection that had drifted onto its own copy as well
+--- as the version it has just replaced.
+---
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @param identifier string|nil The asset the photo now has, which is kept
+--- @return table Array of Apple Photos identifiers
+function M.supersededAssets(index, photo, identifier)
+    local superseded = {}
+    local seen = {}
+
+    local function consider(remoteId)
+        if not remoteId or remoteId == '' or remoteId == identifier or seen[remoteId] then
+            return
+        end
+        seen[remoteId] = true
+
+        local holder = index and index.byAsset[remoteId]
+        if holder then
+            for key in pairs(holder.keys) do
+                if key ~= photo.localIdentifier then
+                    -- Another photo publishes this asset, so it is not ours to delete.
+                    logger:info('Leaving ' .. remoteId .. ', another photo publishes it')
+                    return
+                end
+            end
+        end
+
+        table.insert(superseded, remoteId)
+    end
+
+    consider(Assets.identifier(photo))
+    for _, entry in ipairs(M.entries(index, photo)) do
+        consider(entry.remoteId)
+    end
+
+    return superseded
+end
+
+--- Point collections at the asset their photo now has.
+---
+--- Replacing an asset leaves the other collections publishing the photo holding an
 --- identifier for something that no longer exists. Removing the photo from one of those
 --- would then fail, and republishing it would restore no album memberships.
 ---
 --- @param catalog LrCatalog The active catalog
---- @param publishService LrPublishService
---- @param oldId string The replaced Apple Photos identifier
---- @param newId string The new Apple Photos identifier
---- @param newUrl string|nil The new deep link
---- @param excludeLocalId number Local identifier of the collection Lightroom already updated
-function M.repointSiblings(catalog, publishService, oldId, newId, newUrl, excludeLocalId)
-    local stale = {}
-    for _, entry in ipairs(M.publishedBy(publishService, oldId)) do
-        if entry.collection.localIdentifier ~= excludeLocalId then
-            table.insert(stale, entry)
-        end
-    end
-    if #stale == 0 then
-        return
+--- @param repoints table Array of {publishedPhoto, identifier, url, name}
+--- @return number How many collections were updated
+function M.syncIdentifiers(catalog, repoints)
+    if #repoints == 0 then
+        return 0
     end
 
     -- The ordinary gate, despite the SDK reference saying setRemoteId may be called from
     -- withPrivateWriteAccessDo. Lightroom rejects that with "setRemoteIdForRemotePhoto: must
     -- be called from within a withWriteAccessDo block". Clearing the edited flag in the same
     -- transaction undoes any dirtying this causes, which is the point of doing it here.
+    --
+    -- One transaction for the whole batch: a republish of a large collection would otherwise
+    -- open one per photo and bury everything else on the undo stack.
     catalog:withWriteAccessDo('Update Photos identifiers', function()
-        for _, entry in ipairs(stale) do
-            entry.publishedPhoto:setRemoteId(newId)
-            if newUrl then
-                entry.publishedPhoto:setRemoteUrl(newUrl)
+        for _, repoint in ipairs(repoints) do
+            repoint.publishedPhoto:setRemoteId(repoint.identifier)
+            if repoint.url then
+                repoint.publishedPhoto:setRemoteUrl(repoint.url)
             end
             -- These collections now reference the asset that was just published, and their
             -- albums already hold it because membership was restored onto it. They are
             -- current, so clear the flag the replacement set on the photo rather than
             -- leaving them asking to republish work that is already done.
-            entry.publishedPhoto:setEditedFlag(false)
-            logger:info('Re-pointed ' .. entry.collection:getName() .. ' at ' .. newId)
+            repoint.publishedPhoto:setEditedFlag(false)
         end
     end)
-end
 
---- The identifier a photo can keep instead of being imported again, or nil.
----
---- A photo added to a second collection does not need a new asset: the one it already has is
---- current, and replacing it would leave the collections already publishing it pointing at
---- something deleted. Only reuse when a sibling collection agrees the asset is up to date,
---- which `getEditedFlag` reports.
----
---- @param publishService LrPublishService
---- @param remoteId string|nil The photo's recorded Apple Photos identifier
---- @param excludeLocalId number Local identifier of the collection being published
---- @return string|nil The identifier to reuse
-function M.reusableIdentifier(publishService, remoteId, excludeLocalId)
-    if not remoteId or remoteId == '' then
-        return nil
-    end
-
-    local current = false
-    for _, entry in ipairs(M.publishedBy(publishService, remoteId)) do
-        if entry.collection.localIdentifier ~= excludeLocalId then
-            if entry.publishedPhoto:getEditedFlag() then
-                -- A sibling is waiting to republish this photo, so its asset is stale.
-                return nil
-            end
-            current = true
-        end
-    end
-
-    if current then
-        return remoteId
-    end
-    return nil
+    return #repoints
 end
 
 --- The album UUID for a deep link, with the trailing PhotoKit suffix removed.
@@ -196,11 +333,13 @@ function M.albumUuid(remoteId)
     return remoteId:match('^[^/]+') or remoteId
 end
 
---- Set a collection's album membership to exactly its published photos.
+--- Set a collection's album membership to exactly the assets its photos have.
 ---
---- The repair path for two kinds of drift: an album edited in Photos, and an album created
---- for a collection whose photos were published before album sync existed, which Lightroom
---- will never mention again because nothing about them changed.
+--- The repair path for drift Lightroom will never mention: an album edited in Photos, an
+--- album created for a collection whose photos were published before album sync existed, and
+--- a collection still naming an asset its photo has moved on from. Membership comes from the
+--- photos rather than from this collection's own identifiers, so a collection that had
+--- drifted onto its own copy is brought back in line rather than having the drift confirmed.
 ---
 --- @param collection LrPublishedCollection The collection to reconcile
 --- @return table Result table from the helper
@@ -212,25 +351,54 @@ function M.reconcile(collection)
     end
 
     local name = collection:getName()
+    local catalog = collection.catalog
     local identifiers = {}
+    local adoptions = {}
+    local repoints = {}
+
     for _, publishedPhoto in ipairs(collection:getPublishedPhotos()) do
-        local remoteId = publishedPhoto:getRemoteId()
-        if remoteId and remoteId ~= '' then
-            table.insert(identifiers, remoteId)
+        local photo = publishedPhoto:getPhoto()
+        local rowId = publishedPhoto:getRemoteId()
+        local identifier = Assets.identifier(photo)
+
+        if not identifier and rowId and rowId ~= '' then
+            -- Published before the asset moved onto the photo, so adopt what the row holds.
+            identifier = rowId
+            table.insert(adoptions, { photo = photo, identifier = identifier })
+        end
+
+        if identifier then
+            table.insert(identifiers, identifier)
+            if rowId ~= identifier then
+                table.insert(repoints, {
+                    publishedPhoto = publishedPhoto,
+                    identifier = identifier,
+                })
+            end
         end
     end
 
     local albumIdentifier = collection:getRemoteId()
     if not albumIdentifier or albumIdentifier == '' then
         -- Never published, so there is no album to reconcile against yet.
-        local ensured = Importer.ensureAlbum(name, nil, nil)
+        local ensured = Importer.ensureAlbum(name, nil)
         if ensured.status ~= Importer.STATUS_SUCCESS then
             return ensured
         end
         albumIdentifier = ensured.identifier
-        collection.catalog:withWriteAccessDo('Record Photos album', function()
+        catalog:withWriteAccessDo('Record Photos album', function()
             collection:setRemoteId(albumIdentifier)
         end)
+    end
+
+    if #adoptions > 0 then
+        logger:info('Adopting ' .. Assets.record(catalog, adoptions) .. ' identifiers onto photos')
+    end
+    if #repoints > 0 then
+        for _, repoint in ipairs(repoints) do
+            repoint.url = M.assetUrl(albumIdentifier, repoint.identifier)
+        end
+        logger:info('Re-pointing ' .. M.syncIdentifiers(catalog, repoints) .. ' photos in ' .. name)
     end
 
     logger:info('Reconciling ' .. name .. ' (' .. #identifiers .. ' photos)')

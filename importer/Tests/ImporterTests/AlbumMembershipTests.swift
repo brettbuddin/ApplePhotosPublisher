@@ -132,6 +132,27 @@ struct AlbumMembershipTests {
         #expect(mock.importPhotoCalls.count == 1)
     }
 
+    /// An asset deleted in Photos after the render was skipped on the strength of it leaves
+    /// nothing to import. The plugin drops the identifier on that code, so the next publish
+    /// renders rather than skipping again, and the message has to say that rather than
+    /// reporting the missing file it caused.
+    @Test func reportsTheMissingAssetRatherThanTheMissingFile() async throws {
+        let mock = MockPhotoLibrary()
+        mock.existingAssets = []
+
+        let manifest = Manifest(
+            album: nil,
+            photos: [ManifestPhoto(path: "/nonexistent/skipped.jpg", reuseIdentifier: "deleted-id")])
+        let root = try parseResult(
+            await ImportCommand().executeBatchImport(photoKit: mock, manifest: manifest))
+
+        let result = try #require(
+            root.elements(forName: "results").first?.elements(forName: "result").first)
+        #expect(result.elements(forName: "status").first?.stringValue == "error")
+        #expect(result.elements(forName: "errorCode").first?.stringValue == "REUSE_MISSING")
+        #expect(mock.importPhotoCalls.isEmpty)
+    }
+
     // MARK: - Deep links
 
     /// Deep links point at the mirrored album so "Go to Published Photo" lands in the
