@@ -133,9 +133,11 @@ function M.repointSiblings(catalog, publishService, oldId, newId, newUrl, exclud
         return
     end
 
-    -- The private gate keeps this off the undo stack and out of the photos' change history,
-    -- which otherwise pushes them back into "needs publishing".
-    catalog:withPrivateWriteAccessDo(function()
+    -- The ordinary gate, despite the SDK reference saying setRemoteId may be called from
+    -- withPrivateWriteAccessDo. Lightroom rejects that with "setRemoteIdForRemotePhoto: must
+    -- be called from within a withWriteAccessDo block". Clearing the edited flag in the same
+    -- transaction undoes any dirtying this causes, which is the point of doing it here.
+    catalog:withWriteAccessDo('Update Photos identifiers', function()
         for _, entry in ipairs(stale) do
             entry.publishedPhoto:setRemoteId(newId)
             if newUrl then

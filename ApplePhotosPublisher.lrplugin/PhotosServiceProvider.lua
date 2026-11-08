@@ -8,6 +8,7 @@
 local LrApplication = import 'LrApplication'
 local LrDialogs = import 'LrDialogs'
 local LrErrors = import 'LrErrors'
+local LrTasks = import 'LrTasks'
 
 local pluginLoad = require 'PluginModuleLoader'
 local Albums = pluginLoad 'lib/Albums'
@@ -220,8 +221,20 @@ local function importPhotoBatch(progressScope, renditionPhotos, catalog, context
                     table.insert(oldIdentifiers, rp.previousIdentifier)
                     -- Other collections still name the asset we just replaced. Point them at
                     -- the new one before it is deleted out from under them.
-                    Albums.repointSiblings(catalog, context.publishService, rp.previousIdentifier,
-                        result.localIdentifier, result.url, context.localCollectionId)
+                    --
+                    -- Guarded because this is bookkeeping, and letting it abort the publish
+                    -- costs far more than getting it wrong: the run would stop before
+                    -- deleting the replaced assets, leaving duplicates in Photos.
+                    --
+                    -- LrTasks.pcall rather than Lua's own: the write gate inside yields, and
+                    -- yielding across a plain pcall is not allowed.
+                    local ok, err = LrTasks.pcall(Albums.repointSiblings, catalog,
+                        context.publishService, rp.previousIdentifier, result.localIdentifier,
+                        result.url, context.localCollectionId)
+                    if not ok then
+                        logger:error('Could not update other collections for '
+                            .. result.localIdentifier .. ': ' .. tostring(err))
+                    end
                 end
 
                 if result.reused then
