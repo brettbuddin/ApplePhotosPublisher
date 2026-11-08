@@ -7,7 +7,7 @@ Mirror published collections in the Apple Photos publish service as albums in Ap
 Today every published photo lands in the Photos library with no album of its own. Album
 memberships are only ever *preserved* across a republish, never *created*. This change makes
 the structure of the Publish Services panel visible in Photos: a published collection becomes
-an album, a published collection set becomes a folder.
+an album.
 
 ## Decisions
 
@@ -16,12 +16,13 @@ publishing there means getting a photo into the Photos library without filing it
 it has no album of its own. It keeps its name in the panel, which Lightroom will not let the
 user change anyway.
 
-Published collection sets mirror to folders, so the hierarchy carries over. A collection at
-the top level of the service becomes a top-level album; a collection inside a set becomes an
-album inside the matching folder.
+Collection sets are not offered, so albums all sit at the top level of Photos. They would
+mirror to folders, but deleting a folder in Photos is recursive: it takes every album inside
+with it, including one the user had dragged in that belongs to a collection still being
+published. That is silent and unrecoverable, so the hierarchy is left out until it can be
+made safe. `maxCollectionSetDepth = 0` turns sets off.
 
-Renames carry over at both levels: renaming a collection renames its album, renaming a set
-renames its folder.
+Renaming a collection renames its album.
 
 Deleting a collection deletes its album and never its assets.
 
@@ -51,7 +52,6 @@ doubles as the repair path for drift after the user edits an album in Photos.
 | --- | --- | --- |
 | Published collection | User album (`PHAssetCollectionTypeAlbum` / `AlbumRegular`) | collection `remoteId` |
 | Default collection | nothing; the photo is in the library, unfiled | n/a |
-| Published collection set | Folder (`PHCollectionList`) | collection set `remoteId` |
 | Published photo | Asset | photo `remoteId` plus `photosLocalIdentifier` |
 
 Album and folder identifiers are PhotoKit `localIdentifier` values. They are recorded with
@@ -69,19 +69,16 @@ imports the batch and sets membership in one invocation.
 
 1. Read `exportContext.publishedCollectionInfo` for the collection name and its recorded
    `remoteId`. This applies to the default collection too.
-2. Resolve the folder chain from `publishedCollectionInfo.parents`, outermost first. Each entry
-   carries `remoteCollectionId`, which is the folder identifier when it was already published.
-3. Build the manifest with the album block and the photo list.
-4. On success, call `exportSession:recordRemoteCollectionId(album.identifier)` and
+2. Build the manifest with the album block and the photo list.
+3. On success, call `exportSession:recordRemoteCollectionId(album.identifier)` and
    `recordRemoteCollectionUrl('photos:albums?albumUuid=' .. uuid)`.
 
 ### Lifecycle callbacks to implement
 
 | Callback | Action |
 | --- | --- |
-| `renamePublishedCollection` | Rename the album or folder. No-op when `info.remoteId` is nil. |
-| `deletePublishedCollection` | Delete the album or folder, never its assets. |
-| `reparentPublishedCollection` | Move the album or folder to the new parent, or to the top level. |
+| `renamePublishedCollection` | Rename the album. No-op when `info.remoteId` is nil. |
+| `deletePublishedCollection` | Delete the album, never its assets. |
 | `deletePhotosFromPublishedCollection` | Remove from the album, then delete newly orphaned assets. |
 | `goToPublishedCollection` | Open `photos:albums?albumUuid=<uuid>`, confirmed to select the album. |
 | `validatePublishedCollectionName` | Reject empty and whitespace-only names. |
@@ -93,11 +90,9 @@ claiming a name Photos never accepted.
 Supporting values:
 
 - `getCollectionBehaviorInfo` keeps `defaultCollectionName = 'Apple Photos'`,
-  `defaultCollectionCanBeDeleted = false` and `canAddCollection = true`, and drops
-  `maxCollectionSetDepth` so collection sets are allowed and may nest freely. It is currently
-  pinned to `0`, which disallows them.
-- `titleForPublishedCollection = 'Album'` and `titleForPublishedCollectionSet = 'Folder'` make
-  the context menus read "Create Album" and "Create Folder".
+  `defaultCollectionCanBeDeleted = false`, `canAddCollection = true` and
+  `maxCollectionSetDepth = 0`.
+- `titleForPublishedCollection = 'Album'` makes the context menus read "Create Album".
 - `titleForGoToPublishedCollection = 'Show in Photos'`.
 
 Lightroom does not allow renaming the built-in default collection, confirmed in the panel.
@@ -193,23 +188,13 @@ collections' recorded identifiers are stale afterwards.
 
 ### Lightroom places an album once, then leaves it alone
 
-Lightroom decides where an album is created: `ensureAlbum` puts it in the folder the
-collection's position implies, at the top level when the collection has no collection set.
-After that the placement is the user's. Resolving an album by its recorded identifier returns
-it as it is and never corrects its parent, so moving it in Photos sticks.
+Albums are created at the top level of Photos. After that the placement is the user's:
+resolving an album by its recorded identifier returns it as it is and never corrects its
+parent, so moving it into a folder in Photos sticks.
 
 Moving a collection in Photos does not change its `localIdentifier`, which is what the plugin
 records, so the linkage survives. The probe confirmed this rather than assuming it: it moved
 an album into a folder and back out, re-fetching it by the same identifier each time.
-
-Dragging a collection into a set in Lightroom still moves its album, through
-`reparentPublishedCollection`. Lightroom asked for that move, so it happens.
-
-One hazard follows from this. `deleteCollectionLists:` is recursive, so deleting a collection
-set in Lightroom deletes its Photos folder and every album inside, including an album the user
-moved in that belongs to a collection which was *not* deleted. That would destroy a live
-collection's album as a side effect. Moving unrecognized children out to the top level before
-deleting the folder would prevent it.
 
 ### Album titles drift one way
 
@@ -461,7 +446,12 @@ Manual scenarios against a real library:
 
 ## Deferred
 
+Collection sets as Photos folders. The implementation existed and worked; it was removed in
+favor of a simpler model, and the commit before its removal still has it. Bringing it back
+means solving the recursive folder delete first: relocate a folder's unrecognized children to
+the top level before deleting it, so only the albums Lightroom owns go with it.
+
 Custom sort order through `supportsCustomSortOrder` and `imposeSortOrderOnPublishedCollection`
 backed by `moveAssetsAtIndexes:toIndex:`. The probe reported `rearrangeContent` as available on
-both albums and folders, so the PhotoKit side is permitted; what remains unknown is whether
-iCloud Photos preserves the ordering across devices.
+albums, so the PhotoKit side is permitted; what remains unknown is whether iCloud Photos
+preserves the ordering across devices.

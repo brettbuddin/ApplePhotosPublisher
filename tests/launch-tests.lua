@@ -131,8 +131,8 @@ result = Importer.deletePhotos({ "photo'id" })
 assert(result.status == 'error' and result.errorCode == 'MONITOR_FAILED')
 print('PASS: confirmed success, startup failure, missing XML/status, signal vs exit code, crash after success XML')
 
--- The album and its folder chain ride along in the manifest, so creating the album,
--- importing and setting membership all happen in the one launch publishing already costs.
+-- The album rides along in the manifest, so creating the album, importing and setting
+-- membership all happen in the one launch publishing already costs.
 response = { 0, '<success/>', '', normalExit }
 assert(Importer.importPhotos({
     { path = '/tmp/a.jpg', previousIdentifier = 'prev-1' },
@@ -140,30 +140,26 @@ assert(Importer.importPhotos({
 }, {
     identifier = 'alb-1',
     name = 'Family 2026',
-    folders = { { name = 'Trips' }, { identifier = 'fld-2', name = 'Summer' } },
 }).status == 'success')
 assert(lastManifest, 'manifest should have been written')
-assert(lastManifest:find('<album><identifier>alb-1</identifier><name>Family 2026</name>', 1, true))
-assert(lastManifest:find('<folder><name>Trips</name></folder>', 1, true))
-assert(lastManifest:find('<folder><identifier>fld-2</identifier><name>Summer</name></folder>', 1, true))
+assert(lastManifest:find('<album><identifier>alb-1</identifier><name>Family 2026</name></album>', 1, true))
 assert(lastManifest:find('<previousIdentifier>prev-1</previousIdentifier>', 1, true))
 assert(lastManifest:find('<reuseIdentifier>live-1</reuseIdentifier>', 1, true))
 
 -- An absent identifier must stay absent: an empty tag would read as a real identifier on
 -- the other side rather than "never published".
-Importer.importPhotos({ { path = '/tmp/a.jpg' } }, { name = 'Apple Photos', folders = {} })
+Importer.importPhotos({ { path = '/tmp/a.jpg' } }, { name = 'Trip' })
 assert(not lastManifest:find('<identifier>', 1, true))
-assert(not lastManifest:find('<folders>', 1, true))
 assert(not lastManifest:find('previousIdentifier', 1, true))
 
 -- Publishing without an album leaves the block out entirely.
 Importer.importPhotos({ { path = '/tmp/a.jpg' } }, nil)
 assert(not lastManifest:find('<album>', 1, true))
-print('PASS: manifest album block, folder chain, reuse and omitted identifiers')
+print('PASS: manifest album block, reuse and omitted identifiers')
 
 -- Collection commands build their own argument lists.
-assert(Importer.ensureAlbum('Family', 'alb-1', 'fld-1').identifier == 'alb-1')
-assert(table.concat(lastArgs, ' ') == 'album ensure --name Family --identifier alb-1 --folder fld-1')
+assert(Importer.ensureAlbum('Family', 'alb-1').identifier == 'alb-1')
+assert(table.concat(lastArgs, ' ') == 'album ensure --name Family --identifier alb-1')
 Importer.ensureAlbum('Family')
 assert(table.concat(lastArgs, ' ') == 'album ensure --name Family')
 Importer.renameAlbum('alb-1', 'New Name')
@@ -174,14 +170,6 @@ Importer.removeFromAlbum('alb-1', { 'a', 'b' })
 assert(table.concat(lastArgs, ' ') == 'album remove --identifier alb-1 a b')
 Importer.syncAlbum('alb-1', { 'a' })
 assert(table.concat(lastArgs, ' ') == 'album sync --identifier alb-1 a')
-Importer.ensureFolder('Trips', nil, 'fld-0')
-assert(table.concat(lastArgs, ' ') == 'folder ensure --name Trips --parent fld-0')
-Importer.deleteFolder('fld-1')
-assert(table.concat(lastArgs, ' ') == 'folder delete --identifier fld-1')
-Importer.moveCollection('alb-1', nil)
-assert(table.concat(lastArgs, ' ') == 'folder move --identifier alb-1')
-Importer.moveCollection('alb-1', 'fld-1')
-assert(table.concat(lastArgs, ' ') == 'folder move --identifier alb-1 --folder fld-1')
 
 -- Removing nothing should not launch the helper at all.
 lastArgs = nil
@@ -194,7 +182,7 @@ assert(Importer.isUserCancelled({ status = 'error', errorCode = 'USER_CANCELLED'
 assert(not Importer.isUserCancelled({ status = 'error', errorCode = 'DELETE_FAILED' }))
 assert(not Importer.isUserCancelled({ status = 'success' }))
 assert(not Importer.isAuthorizationError({ status = 'error', errorCode = 'USER_CANCELLED' }))
-print('PASS: album and folder command arguments, empty removal, cancellation classification')
+print('PASS: album command arguments, empty removal, cancellation classification')
 
 if arg[1] == '--integration' then
     -- Execute the real launch path with non-mutating commands only. Test a

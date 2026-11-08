@@ -57,17 +57,14 @@ protocol PhotoLibrary: Sendable {
 
     /// Resolves the album for a published collection, creating it when necessary.
     ///
-    /// Tries `identifier` first. When that is absent or dangling and `folder` is given,
-    /// adopts a child of that folder whose title matches `name` exactly. Otherwise creates a
-    /// new album. Adoption is deliberately scoped to a parent folder: matching by name at the
-    /// top level would silently absorb an unrelated album the user happens to have named the
-    /// same thing.
+    /// Tries `identifier` first, and creates a new album when it is absent or dangling.
+    /// Albums are never matched by name: they all sit at the top level, where that would
+    /// silently absorb an unrelated album the user happens to have named the same thing.
     /// - Parameters:
     ///   - identifier: The album identifier the plugin recorded previously, if any.
     ///   - name: The collection's name, used as the album title.
-    ///   - folder: The parent folder's identifier, or `nil` for the top level.
     /// - Returns: The resolved album and whether it had to be created.
-    func ensureAlbum(identifier: String?, name: String, folder: String?) async throws -> CollectionRef
+    func ensureAlbum(identifier: String?, name: String) async throws -> CollectionRef
 
     /// Renames an album.
     /// - Throws: ``PhotoKitError/albumNotFound(identifier:)`` if it no longer exists.
@@ -87,27 +84,4 @@ protocol PhotoLibrary: Sendable {
     ///
     /// Identifiers that are not in the album are ignored.
     func removeAssets(identifiers: [String], fromAlbum identifier: String) async throws
-
-    // MARK: - Folders
-
-    /// Resolves the folder for a published collection set, creating it when necessary.
-    ///
-    /// Follows the same found, adopted or created sequence as ``ensureAlbum(identifier:name:folder:)``.
-    func ensureFolder(identifier: String?, name: String, parent: String?) async throws -> CollectionRef
-
-    /// Renames a folder.
-    /// - Throws: ``PhotoKitError/folderNotFound(identifier:)`` if it no longer exists.
-    func renameFolder(identifier: String, to name: String) async throws
-
-    /// Deletes a folder *and every collection inside it*, leaving their assets in the library.
-    ///
-    /// The recursion is PhotoKit's, and it matches Lightroom, where deleting a collection set
-    /// takes its children with it. Raises the macOS confirmation dialog.
-    func deleteFolder(identifier: String) async throws
-
-    /// Moves an album or folder to another parent, or to the top level when `folder` is `nil`.
-    ///
-    /// A `PHCollection` has exactly one parent, so adding it to the destination is enough to
-    /// move it; no explicit removal from the old parent is needed.
-    func move(identifier: String, toFolder folder: String?) async throws
 }

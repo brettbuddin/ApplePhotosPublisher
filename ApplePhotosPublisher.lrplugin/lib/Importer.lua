@@ -36,7 +36,7 @@ local AUTHORIZATION_ERROR_CODES = {
 }
 
 --- Error code the helper returns when the user dismissed the macOS confirmation dialog.
---- Deleting an album or a folder always raises that dialog, so a refusal is an ordinary
+--- Deleting an album always raises that dialog, so a refusal is an ordinary
 --- outcome and has to be worded differently from a fault.
 local USER_CANCELLED = 'USER_CANCELLED'
 
@@ -164,7 +164,7 @@ end
 
 --- Build manifest XML for a batch of photos
 --- @param photos table Array of {path, previousIdentifier, reuseIdentifier} tables
---- @param album table|nil {identifier, name, folders} target album, outermost folder first
+--- @param album table|nil {identifier, name} target album
 --- @return string XML string
 local function buildManifestXML(photos, album)
     local builder = LrXml.createXmlBuilder(false)
@@ -173,16 +173,6 @@ local function buildManifestXML(photos, album)
         builder:beginBlock('album')
         optionalTag(builder, 'identifier', album.identifier)
         builder:tag('name', album.name)
-        if album.folders and #album.folders > 0 then
-            builder:beginBlock('folders')
-            for _, folder in ipairs(album.folders) do
-                builder:beginBlock('folder')
-                optionalTag(builder, 'identifier', folder.identifier)
-                builder:tag('name', folder.name)
-                builder:endBlock()
-            end
-            builder:endBlock()
-        end
         builder:endBlock()
     end
     builder:beginBlock('photos')
@@ -236,7 +226,7 @@ end
 --- can't update per-photo) in exchange for reliable imports.
 ---
 --- @param photos table Array of {path, previousIdentifier, reuseIdentifier} tables
---- @param album table|nil {identifier, name, folders} album to file the batch into
+--- @param album table|nil {identifier, name} album to file the batch into
 --- @return table Result table with status, results keyed by path, album, or errorCode/errorMessage
 function M.importPhotos(photos, album)
     if #photos == 0 and not album then
@@ -310,7 +300,7 @@ function M.deletePhotos(identifiers)
     return result
 end
 
---- Run a single album or folder operation through the helper.
+--- Run a single album operation through the helper.
 ---
 --- Each of these comes from one action in the Publish Services panel, so a launch apiece is
 --- acceptable. Batch work rides along in the import manifest instead, to stay inside the
@@ -339,17 +329,12 @@ end
 --- Find or create the album for a published collection.
 --- @param name string The collection's name, used as the album title
 --- @param identifier string|nil Album identifier recorded by a previous publish
---- @param folderIdentifier string|nil Folder to create the album in
 --- @return table Result table, with identifier and created on success
-function M.ensureAlbum(name, identifier, folderIdentifier)
+function M.ensureAlbum(name, identifier)
     local arguments = { 'album', 'ensure', '--name', name }
     if identifier and identifier ~= '' then
         table.insert(arguments, '--identifier')
         table.insert(arguments, identifier)
-    end
-    if folderIdentifier and folderIdentifier ~= '' then
-        table.insert(arguments, '--folder')
-        table.insert(arguments, folderIdentifier)
     end
     return runCollectionCommand('album ensure', arguments)
 end
@@ -388,42 +373,6 @@ function M.syncAlbum(identifier, assetIdentifiers)
         table.insert(arguments, assetIdentifier)
     end
     return runCollectionCommand('album sync', arguments)
-end
-
---- Find or create the folder for a published collection set.
-function M.ensureFolder(name, identifier, parentIdentifier)
-    local arguments = { 'folder', 'ensure', '--name', name }
-    if identifier and identifier ~= '' then
-        table.insert(arguments, '--identifier')
-        table.insert(arguments, identifier)
-    end
-    if parentIdentifier and parentIdentifier ~= '' then
-        table.insert(arguments, '--parent')
-        table.insert(arguments, parentIdentifier)
-    end
-    return runCollectionCommand('folder ensure', arguments)
-end
-
---- Rename a folder.
-function M.renameFolder(identifier, name)
-    return runCollectionCommand('folder rename',
-        { 'folder', 'rename', '--identifier', identifier, '--name', name })
-end
-
---- Delete a folder and every collection inside it, leaving all their photos.
---- Raises the macOS confirmation dialog; a refusal returns USER_CANCELLED.
-function M.deleteFolder(identifier)
-    return runCollectionCommand('folder delete', { 'folder', 'delete', '--identifier', identifier })
-end
-
---- Move an album or folder to a new parent, or to the top level when folderIdentifier is nil.
-function M.moveCollection(identifier, folderIdentifier)
-    local arguments = { 'folder', 'move', '--identifier', identifier }
-    if folderIdentifier and folderIdentifier ~= '' then
-        table.insert(arguments, '--folder')
-        table.insert(arguments, folderIdentifier)
-    end
-    return runCollectionCommand('collection move', arguments)
 end
 
 --- Whether a result describes a missing Photos library permission.

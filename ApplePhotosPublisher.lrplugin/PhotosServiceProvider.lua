@@ -61,12 +61,6 @@ local function requireSuccess(result, what)
     end
 end
 
---- Whether an info table from a lifecycle callback describes a collection set.
-local function isCollectionSet(info)
-    local collection = info.publishedCollection
-    return collection ~= nil and collection:type() == 'LrPublishedCollectionSet'
-end
-
 --- Lightroom publish/export service provider table.
 --- @class PhotosServiceProvider
 local provider = {}
@@ -111,7 +105,7 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
             title = 'Apple Photos',
             f:row {
                 f:static_text {
-                    title = 'Photos will be published to Apple Photos.\n\nCollections you add become albums, and collection sets become folders. The built-in Apple Photos collection files nothing: it just gets photos into your library. Previously published photos will be replaced and their album memberships restored.',
+                    title = 'Photos will be published to Apple Photos.\n\nCollections you add become albums. The built-in Apple Photos collection files nothing: it just gets photos into your library. Previously published photos will be replaced and their album memberships restored.',
                     fill_horizontal = 1,
                 },
             },
@@ -120,8 +114,8 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
 end
 
 --- Configures collection behavior for the publish service.
---- Creates a non-deletable default collection named "Apple Photos". Users can add both
---- collections and collection sets, which mirror to albums and folders in Photos.
+--- Creates a non-deletable default collection named "Apple Photos". Users can add
+--- collections, which mirror to albums in Photos.
 --- @param publishSettings table Current publish settings
 --- @return table Collection behavior configuration
 function provider.getCollectionBehaviorInfo(publishSettings)
@@ -129,16 +123,17 @@ function provider.getCollectionBehaviorInfo(publishSettings)
         defaultCollectionName = 'Apple Photos',
         defaultCollectionCanBeDeleted = false,
         canAddCollection = true,
-        -- maxCollectionSetDepth is deliberately absent, which allows collection sets and
-        -- lets them nest freely. Each one mirrors to a folder in Photos.
+        -- Collection sets are not offered. They would mirror to Photos folders, and
+        -- deleting a folder in Photos is recursive: it takes every album inside with it,
+        -- including one the user had dragged in that belongs to a collection still being
+        -- published. Albums all sit at the top level instead.
+        maxCollectionSetDepth = 0,
     }
 end
 
---- Photos calls these albums and folders, so the panel's menus should too.
+--- Photos calls these albums, so the panel's menus should too.
 provider.titleForPublishedCollection = 'Album'
 provider.titleForPublishedCollection_standalone = 'Album'
-provider.titleForPublishedCollectionSet = 'Folder'
-provider.titleForPublishedCollectionSet_standalone = 'Folder'
 provider.titleForPublishedSmartCollection = 'Smart Album'
 provider.titleForPublishedSmartCollection_standalone = 'Smart Album'
 provider.titleForGoToPublishedCollection = 'Show in Photos'
@@ -173,7 +168,7 @@ end
 --- @param catalog LrCatalog The active Lightroom catalog
 --- @param context table {album, publishService, collection, localCollectionId}
 --- @return table Array of old Apple Photos identifiers that were replaced
---- @return table|nil The album the helper resolved, as {identifier, created, folders}
+--- @return table|nil The album the helper resolved, as {identifier, created}
 local function importPhotoBatch(progressScope, renditionPhotos, catalog, context)
     local batchPhotos = {}
     for _, rp in ipairs(renditionPhotos) do
@@ -380,7 +375,6 @@ function provider.processRenderedPhotos(functionContext, exportContext)
             logger:info('Replaced ' .. #oldIdentifiers .. ' assets; sibling lookup '
                 .. Albums.describeLastScan())
         end
-        Albums.recordFolderIdentifiers(catalog, collection, album.folders)
     end
 
     deleteOldVersions(progressScope, oldIdentifiers)
@@ -496,7 +490,7 @@ function provider.deletePhotosFromPublishedCollection(publishSettings, photoIDs,
     end
 end
 
---- Called when the user renames a published collection or collection set.
+--- Called when the user renames a published collection.
 --- @param publishSettings table Current publish settings
 --- @param info table Lifecycle info, including remoteId and the new name
 function provider.renamePublishedCollection(publishSettings, info)
@@ -505,22 +499,14 @@ function provider.renamePublishedCollection(publishSettings, info)
         return
     end
 
-    if isCollectionSet(info) then
-        requireSuccess(Importer.renameFolder(info.remoteId, info.name),
-            'rename the folder in Apple Photos')
-        logger:info('Renamed Photos folder to ' .. info.name)
-    else
-        requireSuccess(Importer.renameAlbum(info.remoteId, info.name),
-            'rename the album in Apple Photos')
-        logger:info('Renamed Photos album to ' .. info.name)
-    end
+    requireSuccess(Importer.renameAlbum(info.remoteId, info.name),
+        'rename the album in Apple Photos')
+    logger:info('Renamed Photos album to ' .. info.name)
 end
 
---- Called when the user deletes a published collection or collection set.
+--- Called when the user deletes a published collection.
 ---
---- Only the container goes; its photos stay in the library unless nothing else publishes
---- them. Deleting a folder takes its child albums with it, which matches Lightroom deleting
---- a collection set's children, and still leaves every asset alone.
+--- Only the album goes; its photos stay in the library unless nothing else publishes them.
 ---
 --- @param publishSettings table Current publish settings
 --- @param info table Lifecycle info, including remoteId
@@ -548,44 +534,9 @@ function provider.deletePublishedCollection(publishSettings, info)
         end
     end
 
-    if isCollectionSet(info) then
-        requireSuccess(Importer.deleteFolder(info.remoteId),
-            'delete the folder from Apple Photos')
-    else
-        requireSuccess(Importer.deleteAlbum(info.remoteId),
-            'delete the album from Apple Photos')
-    end
-    logger:info('Deleted Photos container ' .. info.remoteId)
-end
-
---- Called when the user drags a published collection or set to a new parent.
---- @param publishSettings table Current publish settings
---- @param info table Lifecycle info, including remoteId
-function provider.reparentPublishedCollection(publishSettings, info)
-    if info.isDefaultCollection then
-        -- No album to move. A recorded identifier may survive from before the default
-        -- collection stopped mirroring, and acting on it would move a stale album.
-        return
-    end
-
-    if not info.remoteId or info.remoteId == '' then
-        return
-    end
-
-    local collection = info.publishedCollection
-    if not collection then
-        return
-    end
-
-    local catalog = LrApplication.activeCatalog()
-    local parent, failure = Albums.ensureFolderChain(catalog, collection)
-    if failure then
-        failCollectionOperation(failure, 'create the folder in Apple Photos')
-    end
-
-    requireSuccess(Importer.moveCollection(info.remoteId, parent),
-        'move the album in Apple Photos')
-    logger:info('Moved ' .. info.name .. ' to ' .. (parent or 'the top level'))
+    requireSuccess(Importer.deleteAlbum(info.remoteId),
+        'delete the album from Apple Photos')
+    logger:info('Deleted Photos album ' .. info.remoteId)
 end
 
 --- Called for the "Show in Photos" context-menu item.

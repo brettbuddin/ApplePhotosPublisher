@@ -1,18 +1,13 @@
 import Foundation
 import Photos
 
-/// Album and folder management, mirroring Lightroom's published collections and collection
-/// sets into Photos.
+/// Album management, mirroring Lightroom's published collections into Photos.
 ///
 /// Lives apart from the asset operations in ``PhotoKitAccessor`` because the two have little
 /// to do with each other: these only ever touch containers, never the photos inside them.
 extension PhotoKitAccessor {
 
     /// Fetch a folder by its local identifier
-    func fetchFolder(withIdentifier identifier: String) async -> PHCollectionList? {
-        PHCollectionList.fetchCollectionLists(withLocalIdentifiers: [identifier], options: nil).firstObject
-    }
-
     /// Rename a container back to its collection's name when the two have diverged.
     ///
     /// Renames only ever travel from Lightroom to Photos, so without this a container renamed
@@ -32,19 +27,6 @@ extension PhotoKitAccessor {
             return
         }
         try await rename()
-    }
-
-    /// The child of `folder` whose title matches `name` exactly, if there is one.
-    private func child(of folder: PHCollectionList, titled name: String) -> PHCollection? {
-        var match: PHCollection?
-        PHCollection.fetchCollections(in: folder, options: nil)
-            .enumerateObjects { collection, _, stop in
-                if collection.localizedTitle == name {
-                    match = collection
-                    stop.pointee = true
-                }
-            }
-        return match
     }
 
     /// Creates a container and returns its identifier, mapping failures to one error.
@@ -95,26 +77,19 @@ extension PhotoKitAccessor {
         }
     }
 
-    func ensureAlbum(identifier: String?, name: String, folder: String?) async throws -> CollectionRef {
+    func ensureAlbum(identifier: String?, name: String) async throws -> CollectionRef {
         if let identifier, let found = await fetchAlbum(withIdentifier: identifier) {
             try await enforce(title: name, on: found) {
                 try await self.renameAlbum(identifier: found.localIdentifier, to: name)
             }
             return CollectionRef(identifier: found.localIdentifier, created: false)
         }
-        // Adopt by name only inside a known folder. At the top level the same check would
-        // absorb an unrelated album the user happens to have given this name.
-        if let folder, let parent = await fetchFolder(withIdentifier: folder),
-           let adopted = child(of: parent, titled: name) as? PHAssetCollection {
-            return CollectionRef(identifier: adopted.localIdentifier, created: false)
-        }
+        // No matching by name. Albums all sit at the top level, where an album the user
+        // happens to have given this name would be absorbed by mistake.
         let created = try await create(name) {
             PHAssetCollectionChangeRequest
                 .creationRequestForAssetCollection(withTitle: name)
                 .placeholderForCreatedAssetCollection
-        }
-        if folder != nil {
-            try await move(identifier: created, toFolder: folder)
         }
         return CollectionRef(identifier: created, created: true)
     }
@@ -166,88 +141,6 @@ extension PhotoKitAccessor {
         } catch {
             throw PhotoKitError.removeFromAlbumFailed(
                 albumID: identifier, reason: error.localizedDescription
-            )
-        }
-    }
-
-    // MARK: - Folders
-
-    func ensureFolder(identifier: String?, name: String, parent: String?) async throws -> CollectionRef {
-        if let identifier, let found = await fetchFolder(withIdentifier: identifier) {
-            try await enforce(title: name, on: found) {
-                try await self.renameFolder(identifier: found.localIdentifier, to: name)
-            }
-            return CollectionRef(identifier: found.localIdentifier, created: false)
-        }
-        if let parent, let container = await fetchFolder(withIdentifier: parent),
-           let adopted = child(of: container, titled: name) as? PHCollectionList {
-            return CollectionRef(identifier: adopted.localIdentifier, created: false)
-        }
-        let created = try await create(name) {
-            PHCollectionListChangeRequest
-                .creationRequestForCollectionList(withTitle: name)
-                .placeholderForCreatedCollectionList
-        }
-        if parent != nil {
-            try await move(identifier: created, toFolder: parent)
-        }
-        return CollectionRef(identifier: created, created: true)
-    }
-
-    func renameFolder(identifier: String, to name: String) async throws {
-        guard let folder = await fetchFolder(withIdentifier: identifier) else {
-            throw PhotoKitError.folderNotFound(identifier: identifier)
-        }
-        try require(folder, .rename, "renaming")
-        try await applyRename(identifier, name) {
-            PHCollectionListChangeRequest(for: folder)?.title = name
-        }
-    }
-
-    func deleteFolder(identifier: String) async throws {
-        guard let folder = await fetchFolder(withIdentifier: identifier) else { return }
-        try require(folder, .delete, "deleting")
-        // PhotoKit takes the folder's child collections with it. That matches Lightroom,
-        // where deleting a collection set deletes its children, and assets survive either way.
-        try await applyDelete(identifier, "folder") {
-            PHCollectionListChangeRequest.deleteCollectionLists([folder] as NSArray)
-        }
-    }
-
-    func move(identifier: String, toFolder folder: String?) async throws {
-        let collection: PHCollection
-        if let album = await fetchAlbum(withIdentifier: identifier) {
-            collection = album
-        } else if let existing = await fetchFolder(withIdentifier: identifier) {
-            collection = existing
-        } else {
-            throw PhotoKitError.albumNotFound(identifier: identifier)
-        }
-
-        do {
-            // A PHCollection has exactly one parent, so adding it to the destination moves it.
-            if let folder {
-                guard let parent = await fetchFolder(withIdentifier: folder) else {
-                    throw PhotoKitError.folderNotFound(identifier: folder)
-                }
-                try require(parent, .addContent, "adding collections")
-                try await perform("moving into the folder") {
-                    PHCollectionListChangeRequest(for: parent)?
-                        .addChildCollections([collection] as NSArray)
-                }
-            } else {
-                let topLevel = PHCollection.fetchTopLevelUserCollections(with: nil)
-                try await perform("moving to the top level") {
-                    PHCollectionListChangeRequest(
-                        forTopLevelCollectionListUserCollections: topLevel
-                    )?.addChildCollections([collection] as NSArray)
-                }
-            }
-        } catch let error as PhotoKitError {
-            throw error
-        } catch {
-            throw PhotoKitError.moveCollectionFailed(
-                identifier: identifier, reason: error.localizedDescription
             )
         }
     }

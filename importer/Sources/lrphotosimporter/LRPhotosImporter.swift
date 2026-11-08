@@ -18,7 +18,7 @@ struct LRPhotosImporter: AsyncParsableCommand {
                 Outputs XML to stdout for easy parsing.
                 """,
             subcommands: [ImportCommand.self, DeleteCommand.self, OpenCommand.self,
-                          AuthorizeCommand.self, AlbumCommand.self, FolderCommand.self]
+                          AuthorizeCommand.self, AlbumCommand.self]
         )
         #if RELEASE_BUILD
         config.version = BuildInfo.version

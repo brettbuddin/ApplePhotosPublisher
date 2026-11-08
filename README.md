@@ -2,7 +2,7 @@
 
 # ApplePhotosPublisher
 
-Lightroom Classic Publish Service plugin for Apple Photos. Publish photos to Apple Photos and republish to update them with new edits. Published collections appear as albums in Apple Photos, and collection sets appear as folders. Album memberships and favorite status in Apple Photos is preserved when images are republished, but all edits are replaced.
+Lightroom Classic Publish Service plugin for Apple Photos. Publish photos to Apple Photos and republish to update them with new edits. Published collections appear as albums in Apple Photos. Album memberships and favorite status in Apple Photos is preserved when images are republished, but all edits are replaced.
 
 I use this plugin to manage edits shared with family and to have edits show up in Apple Photos Memories widgets across the ecosystem.
 
@@ -34,13 +34,13 @@ When publishing, the plugin renders photos as full-quality JPEGs and imports the
 
 When republishing, album memberships and favorite status in Apple Photos are preserved and the old version is replaced. Changes to title, caption, keywords, GPS, date, or rating will mark a photo for republish.
 
-### Albums and Folders
+### Albums
 
-Collections you add are mirrored as albums in Apple Photos, and collection sets become folders, so the shape of the Publish Services panel carries over.
+Collections you add are mirrored as albums in Apple Photos.
 
 The built-in **Apple Photos** collection is the exception and gets no album. Publishing there means "put this in my Photos library without filing it anywhere". Use it for photos you want in Photos but not organized, and use collections for the ones you want gathered into albums.
 
-Renaming a collection renames its album. Deleting one deletes the album but keeps the photos, unless no other collection still publishes them. Dragging a collection into a folder moves its album to match.
+Renaming a collection renames its album. Deleting one deletes the album but keeps the photos, unless no other collection still publishes them.
 
 A photo added to a second collection keeps the asset it already has rather than being imported again, so both albums show the same photo and neither collection is left pointing at a replaced version.
 

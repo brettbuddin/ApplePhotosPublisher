@@ -31,7 +31,7 @@ struct AlbumMembershipTests {
         mock.importPhotoReturn = "new-id"
 
         let manifest = Manifest(
-            album: ManifestAlbum(identifier: "alb-1", name: "Family", folders: []),
+            album: ManifestAlbum(identifier: "alb-1", name: "Family"),
             photos: [ManifestPhoto(path: file.path)])
         _ = await ImportCommand().executeBatchImport(photoKit: mock, manifest: manifest)
 
@@ -49,7 +49,7 @@ struct AlbumMembershipTests {
         mock.importPhotoReturn = "new-id/L0/001"
 
         let manifest = Manifest(
-            album: ManifestAlbum(identifier: "alb-1", name: "Family", folders: []),
+            album: ManifestAlbum(identifier: "alb-1", name: "Family"),
             photos: [ManifestPhoto(path: file.path)])
         _ = await ImportCommand().executeBatchImport(photoKit: mock, manifest: manifest)
 
@@ -68,7 +68,7 @@ struct AlbumMembershipTests {
         mock.importPhotoReturn = "abc-123/L0/004"
 
         let manifest = Manifest(
-            album: ManifestAlbum(identifier: "alb-1", name: "Family", folders: []),
+            album: ManifestAlbum(identifier: "alb-1", name: "Family"),
             photos: [ManifestPhoto(path: file.path)])
         _ = await ImportCommand().executeBatchImport(photoKit: mock, manifest: manifest)
 
@@ -95,7 +95,7 @@ struct AlbumMembershipTests {
 
         // No file on disk: Lightroom skipped the render, so there is nothing to read.
         let manifest = Manifest(
-            album: ManifestAlbum(identifier: "alb-1", name: "Family", folders: []),
+            album: ManifestAlbum(identifier: "alb-1", name: "Family"),
             photos: [ManifestPhoto(path: "/nonexistent/skipped.jpg", reuseIdentifier: "live-id")])
         let root = try parseResult(
             await ImportCommand().executeBatchImport(photoKit: mock, manifest: manifest))
@@ -147,7 +147,7 @@ struct AlbumMembershipTests {
         mock.userLibraryAlbumIdentifierReturn = "library-id"
 
         let manifest = Manifest(
-            album: ManifestAlbum(identifier: "alb-1/L0/040", name: "Family", folders: []),
+            album: ManifestAlbum(identifier: "alb-1/L0/040", name: "Family"),
             photos: [ManifestPhoto(path: file.path)])
         let root = try parseResult(
             await ImportCommand().executeBatchImport(photoKit: mock, manifest: manifest))

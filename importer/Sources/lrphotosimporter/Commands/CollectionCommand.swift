@@ -57,13 +57,10 @@ struct AlbumCommand: AsyncParsableCommand {
         @Option(name: .customLong("identifier"), help: "Album identifier recorded by a previous publish")
         var identifier: String?
 
-        @Option(name: .customLong("folder"), help: "Identifier of the folder to create the album in")
-        var folder: String?
-
         mutating func run() async {
-            let (name, identifier, folder) = (self.name, self.identifier, self.folder)
+            let (name, identifier) = (self.name, self.identifier)
             print(await CollectionRunner.run { photoKit in
-                try await photoKit.ensureAlbum(identifier: identifier, name: name, folder: folder)
+                try await photoKit.ensureAlbum(identifier: identifier, name: name)
             })
         }
     }
@@ -155,92 +152,6 @@ struct AlbumCommand: AsyncParsableCommand {
                 for asset in assets where !presentPrefixes.contains(asset.uuidPrefix) {
                     try await photoKit.addAsset(identifier: asset, toAlbum: identifier)
                 }
-                return nil
-            })
-        }
-    }
-}
-
-/// Manages the Photos folder that mirrors a Lightroom published collection set.
-struct FolderCommand: AsyncParsableCommand {
-    static var configuration = CommandConfiguration(
-        commandName: "folder",
-        abstract: "Manage the Photos folder for a published collection set",
-        subcommands: [Ensure.self, Rename.self, Delete.self, Move.self]
-    )
-
-    struct Ensure: AsyncParsableCommand {
-        static var configuration = CommandConfiguration(
-            commandName: "ensure", abstract: "Find or create the folder for a collection set")
-
-        @Option(name: .customLong("name"), help: "The collection set's name, used as the folder title")
-        var name: String
-
-        @Option(name: .customLong("identifier"), help: "Folder identifier recorded by a previous publish")
-        var identifier: String?
-
-        @Option(name: .customLong("parent"), help: "Identifier of the folder to nest inside")
-        var parent: String?
-
-        mutating func run() async {
-            let (name, identifier, parent) = (self.name, self.identifier, self.parent)
-            print(await CollectionRunner.run { photoKit in
-                try await photoKit.ensureFolder(identifier: identifier, name: name, parent: parent)
-            })
-        }
-    }
-
-    struct Rename: AsyncParsableCommand {
-        static var configuration = CommandConfiguration(
-            commandName: "rename", abstract: "Rename a folder")
-
-        @Option(name: .customLong("identifier"), help: "Folder identifier")
-        var identifier: String
-
-        @Option(name: .customLong("name"), help: "New folder title")
-        var name: String
-
-        mutating func run() async {
-            let (name, identifier) = (self.name, self.identifier)
-            print(await CollectionRunner.run { photoKit in
-                try await photoKit.renameFolder(identifier: identifier, to: name)
-                return nil
-            })
-        }
-    }
-
-    /// Deletes the folder and every collection inside it, keeping all their photos.
-    struct Delete: AsyncParsableCommand {
-        static var configuration = CommandConfiguration(
-            commandName: "delete", abstract: "Delete a folder and its children, keeping all photos")
-
-        @Option(name: .customLong("identifier"), help: "Folder identifier")
-        var identifier: String
-
-        mutating func run() async {
-            let identifier = self.identifier
-            print(await CollectionRunner.run { photoKit in
-                try await photoKit.deleteFolder(identifier: identifier)
-                return nil
-            })
-        }
-    }
-
-    /// Moves an album or folder to another folder, or to the top level.
-    struct Move: AsyncParsableCommand {
-        static var configuration = CommandConfiguration(
-            commandName: "move", abstract: "Move an album or folder to a new parent")
-
-        @Option(name: .customLong("identifier"), help: "Album or folder identifier to move")
-        var identifier: String
-
-        @Option(name: .customLong("folder"), help: "Destination folder, omitted for the top level")
-        var folder: String?
-
-        mutating func run() async {
-            let (identifier, folder) = (self.identifier, self.folder)
-            print(await CollectionRunner.run { photoKit in
-                try await photoKit.move(identifier: identifier, toFolder: folder)
                 return nil
             })
         }

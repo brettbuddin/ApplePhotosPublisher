@@ -114,9 +114,6 @@ final class MockPhotoLibrary: PhotoLibrary, @unchecked Sendable {
     /// Albums and folders this mock knows about, keyed by identifier, valued by title.
     var collectionTitles: [String: String] = [:]
 
-    /// Children of each folder, keyed by folder identifier, so adoption by name can be tested.
-    var folderChildren: [String: [String]] = [:]
-
     /// Identifier handed out by the next create. Each create appends a counter to it.
     var createdIdentifierPrefix = "created"
 
@@ -124,24 +121,17 @@ final class MockPhotoLibrary: PhotoLibrary, @unchecked Sendable {
     var renameError: Error?
     var deleteCollectionError: Error?
     var removeAssetsError: Error?
-    var moveError: Error?
 
-    /// A recorded ``ensureAlbum(identifier:name:folder:)`` or
-    /// ``ensureFolder(identifier:name:parent:)`` call.
+    /// A recorded ``ensureAlbum(identifier:name:)`` call.
     struct ResolveCall: Equatable {
         let identifier: String?
         let name: String
-        /// The parent folder, which is `folder` for albums and `parent` for folders.
-        let parent: String?
     }
 
     var ensureAlbumCalls: [ResolveCall] = []
-    var ensureFolderCalls: [ResolveCall] = []
     var renameCalls: [(identifier: String, name: String)] = []
     var deleteCollectionCalls: [String] = []
     var removeAssetsCalls: [(identifiers: [String], album: String)] = []
-    var moveCalls: [(identifier: String, folder: String?)] = []
-
     private var createCount = 0
 
     func assetExists(identifier: String) async -> Bool {
@@ -154,29 +144,20 @@ final class MockPhotoLibrary: PhotoLibrary, @unchecked Sendable {
         return "\(createdIdentifierPrefix)-\(createCount)"
     }
 
-    /// Mirrors the accessor's found, adopted or created sequence.
-    private func resolve(
-        identifier: String?, name: String, parent: String?
-    ) -> CollectionRef {
-        if let identifier, collectionTitles[identifier] != nil {
-            return CollectionRef(identifier: identifier, created: false)
-        }
-        if let parent, let children = folderChildren[parent],
-           let adopted = children.first(where: { collectionTitles[$0] == name }) {
-            return CollectionRef(identifier: adopted, created: false)
-        }
-        let created = nextIdentifier()
-        collectionTitles[created] = name
-        if let parent {
-            folderChildren[parent, default: []].append(created)
-        }
-        return CollectionRef(identifier: created, created: true)
-    }
-
-    func ensureAlbum(identifier: String?, name: String, folder: String?) async throws -> CollectionRef {
-        ensureAlbumCalls.append(ResolveCall(identifier: identifier, name: name, parent: folder))
+    /// Mirrors the accessor's found-or-created sequence.
+    func ensureAlbum(identifier: String?, name: String) async throws -> CollectionRef {
+        ensureAlbumCalls.append(ResolveCall(identifier: identifier, name: name))
         if let error = ensureAlbumError { throw error }
-        let ref = resolve(identifier: identifier, name: name, parent: folder)
+
+        let ref: CollectionRef
+        if let identifier, collectionTitles[identifier] != nil {
+            collectionTitles[identifier] = name
+            ref = CollectionRef(identifier: identifier, created: false)
+        } else {
+            let created = nextIdentifier()
+            collectionTitles[created] = name
+            ref = CollectionRef(identifier: created, created: true)
+        }
         if albumContents[ref.identifier] == nil { albumContents[ref.identifier] = [] }
         return ref
     }
@@ -203,33 +184,5 @@ final class MockPhotoLibrary: PhotoLibrary, @unchecked Sendable {
         if let error = removeAssetsError { throw error }
         let removing = Set(identifiers)
         albumContents[identifier] = (albumContents[identifier] ?? []).filter { !removing.contains($0) }
-    }
-
-    func ensureFolder(identifier: String?, name: String, parent: String?) async throws -> CollectionRef {
-        ensureFolderCalls.append(ResolveCall(identifier: identifier, name: name, parent: parent))
-        return resolve(identifier: identifier, name: name, parent: parent)
-    }
-
-    func renameFolder(identifier: String, to name: String) async throws {
-        renameCalls.append((identifier, name))
-        if let error = renameError { throw error }
-        collectionTitles[identifier] = name
-    }
-
-    func deleteFolder(identifier: String) async throws {
-        deleteCollectionCalls.append(identifier)
-        if let error = deleteCollectionError { throw error }
-        collectionTitles[identifier] = nil
-    }
-
-    func move(identifier: String, toFolder folder: String?) async throws {
-        moveCalls.append((identifier, folder))
-        if let error = moveError { throw error }
-        for key in folderChildren.keys {
-            folderChildren[key] = folderChildren[key]?.filter { $0 != identifier }
-        }
-        if let folder {
-            folderChildren[folder, default: []].append(identifier)
-        }
     }
 }

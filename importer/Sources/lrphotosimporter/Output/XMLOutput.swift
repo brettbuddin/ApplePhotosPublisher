@@ -89,11 +89,11 @@ enum XMLOutput {
     /// - Parameters:
     ///   - results: The individual import results for each photo in the batch.
     ///   - albumUuid: The User Library album UUID used to construct deep-link URLs, or `nil`.
-    ///   - album: The album the batch was filed into and the folders leading to it, so the
-    ///     plugin can record every identifier and notice which stale ones were recreated.
+    ///   - album: The album the batch was filed into, so the plugin can record its
+    ///     identifier and notice that a stale one had to be recreated.
     /// - Returns: A complete XML document string.
     static func batchImportResult(
-        results: [SingleImportResult], albumUuid: String?, album: ResolvedAlbum? = nil
+        results: [SingleImportResult], albumUuid: String?, album: CollectionRef? = nil
     ) -> String {
         let root = XMLElement(name: "batchImportResult")
         root.addChild(XMLElement(name: "status", stringValue: "success"))
@@ -199,27 +199,12 @@ enum XMLOutput {
         return xmlString(from: root)
     }
 
-    /// Builds the `<album>` block, including the folder chain in manifest order.
-    private static func element(for resolved: ResolvedAlbum) -> XMLElement {
+    /// Builds the `<album>` block.
+    private static func element(for album: CollectionRef) -> XMLElement {
         let albumElement = XMLElement(name: "album")
+        albumElement.addChild(XMLElement(name: "identifier", stringValue: album.identifier))
         albumElement.addChild(
-            XMLElement(name: "identifier", stringValue: resolved.album.identifier))
-        albumElement.addChild(
-            XMLElement(name: "created", stringValue: resolved.album.created ? "true" : "false"))
-
-        if !resolved.folders.isEmpty {
-            let foldersElement = XMLElement(name: "folders")
-            for folder in resolved.folders {
-                let folderElement = XMLElement(name: "folder")
-                folderElement.addChild(
-                    XMLElement(name: "identifier", stringValue: folder.identifier))
-                folderElement.addChild(
-                    XMLElement(name: "created", stringValue: folder.created ? "true" : "false"))
-                foldersElement.addChild(folderElement)
-            }
-            albumElement.addChild(foldersElement)
-        }
-
+            XMLElement(name: "created", stringValue: album.created ? "true" : "false"))
         return albumElement
     }
 

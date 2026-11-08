@@ -29,15 +29,6 @@ struct ManifestPhoto {
     }
 }
 
-/// A folder in the chain leading to the manifest's album, outermost first.
-struct ManifestFolder {
-    /// Identifier recorded by a previous publish, which may be absent or stale.
-    let identifier: String?
-
-    /// The collection set's name, used as the folder title.
-    let name: String
-}
-
 /// The album a batch should be filed into, mirroring the published collection.
 struct ManifestAlbum {
     /// Identifier recorded by a previous publish, which may be absent or stale.
@@ -45,9 +36,6 @@ struct ManifestAlbum {
 
     /// The collection's name, used as the album title.
     let name: String
-
-    /// The collection sets containing this collection, outermost first.
-    let folders: [ManifestFolder]
 }
 
 /// A parsed import manifest.
@@ -99,27 +87,14 @@ struct ImportCommand: AsyncParsableCommand {
         return Manifest(album: parseAlbum(root), photos: parsePhotos(root))
     }
 
-    /// Reads the optional `<album>` block, including its folder chain.
+    /// Reads the optional `<album>` block.
     private func parseAlbum(_ root: XMLElement) -> ManifestAlbum? {
         guard let element = root.elements(forName: "album").first,
               let name = element.elements(forName: "name").first?.stringValue, !name.isEmpty else {
             return nil
         }
 
-        var folders: [ManifestFolder] = []
-        if let foldersElement = element.elements(forName: "folders").first {
-            for folderElement in foldersElement.elements(forName: "folder") {
-                guard let folderName = folderElement.elements(forName: "name").first?.stringValue,
-                      !folderName.isEmpty else {
-                    continue
-                }
-                folders.append(ManifestFolder(
-                    identifier: nonEmpty(folderElement, "identifier"), name: folderName))
-            }
-        }
-
-        return ManifestAlbum(
-            identifier: nonEmpty(element, "identifier"), name: name, folders: folders)
+        return ManifestAlbum(identifier: nonEmpty(element, "identifier"), name: name)
     }
 
     private func parsePhotos(_ root: XMLElement) -> [ManifestPhoto] {
@@ -197,10 +172,11 @@ struct ImportCommand: AsyncParsableCommand {
 
         // Resolve the album before importing anything. Creating containers never prompts, so
         // a failure here is genuine, and failing now leaves no half-filed batch behind.
-        var album: ResolvedAlbum?
+        var album: CollectionRef?
         if let target = manifest.album {
             do {
-                album = try await resolveAlbum(photoKit: photoKit, target: target)
+                album = try await photoKit.ensureAlbum(
+                    identifier: target.identifier, name: target.name)
             } catch let error as PhotoKitError {
                 return XMLOutput.batchImportError(
                     code: error.code, message: error.errorDescription ?? "Could not resolve the album")
@@ -222,38 +198,18 @@ struct ImportCommand: AsyncParsableCommand {
         }
 
         if let album {
-            await fileIntoAlbum(photoKit: photoKit, album: album.album.identifier, results: results)
+            await fileIntoAlbum(photoKit: photoKit, album: album.identifier, results: results)
         }
 
         // Prefer the mirrored album for deep links so "Go to Published Photo" lands in the
         // collection's album rather than the whole library.
         let albumUuid: String?
         if let album {
-            albumUuid = album.album.identifier.uuidPrefix
+            albumUuid = album.identifier.uuidPrefix
         } else {
             albumUuid = (await photoKit.userLibraryAlbumIdentifier())?.uuidPrefix
         }
         return XMLOutput.batchImportResult(results: results, albumUuid: albumUuid, album: album)
-    }
-
-    /// Walks the folder chain outermost first, then resolves the album inside it.
-    ///
-    /// Every folder it resolves is reported back, because the plugin has to record each
-    /// identifier against its collection set or the next publish will build the chain again.
-    private func resolveAlbum(
-        photoKit: any PhotoLibrary, target: ManifestAlbum
-    ) async throws -> ResolvedAlbum {
-        var folders: [CollectionRef] = []
-        var parent: String?
-        for folder in target.folders {
-            let resolved = try await photoKit.ensureFolder(
-                identifier: folder.identifier, name: folder.name, parent: parent)
-            folders.append(resolved)
-            parent = resolved.identifier
-        }
-        let album = try await photoKit.ensureAlbum(
-            identifier: target.identifier, name: target.name, folder: parent)
-        return ResolvedAlbum(album: album, folders: folders)
     }
 
     /// Adds the batch's assets to the album, skipping any already in it.

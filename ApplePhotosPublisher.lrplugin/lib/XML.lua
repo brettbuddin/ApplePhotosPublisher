@@ -62,34 +62,16 @@ local function parseRoot(xml, name)
     return findChild(dom, name)
 end
 
---- Parse the album the helper filed a batch into, with the folders leading to it.
---- The folders come back in the order they were sent, outermost first, so the plugin can
---- pair each one with the collection set that asked for it.
+--- Parse the album the helper filed a batch into.
 --- @param root xmlDomInstance The batchImportResult element
---- @return table|nil {identifier, created, folders} or nil when publishing without an album
+--- @return table|nil {identifier, created} or nil when publishing without an album
 local function parseAlbum(root)
     local node = findChild(root, 'album')
     if not node then return nil end
 
-    local folders = {}
-    local foldersNode = findChild(node, 'folders')
-    if foldersNode then
-        local count = foldersNode:childCount() or 0
-        for i = 1, count do
-            local folderNode = foldersNode:childAtIndex(i)
-            if folderNode and folderNode:type() == 'element' and folderNode:name() == 'folder' then
-                table.insert(folders, {
-                    identifier = getChildText(folderNode, 'identifier'),
-                    created = getChildText(folderNode, 'created') == 'true',
-                })
-            end
-        end
-    end
-
     return {
         identifier = getChildText(node, 'identifier'),
         created = getChildText(node, 'created') == 'true',
-        folders = folders,
     }
 end
 
@@ -195,8 +177,8 @@ function M.parseDeleteResult(xml)
     return result
 end
 
---- Parse an album or folder operation result.
---- @param xml string The XML response from an album or folder command
+--- Parse an album operation result.
+--- @param xml string The XML response from an album command
 --- @return table Parsed result with status, identifier/created or errorCode/errorMessage
 function M.parseCollectionResult(xml)
     local result = {}

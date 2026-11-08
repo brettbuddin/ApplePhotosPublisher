@@ -1,8 +1,7 @@
 --[[
     Albums
 
-    Maps Lightroom's published collections onto Apple Photos albums, and published collection
-    sets onto folders.
+    Maps Lightroom's published collections onto Apple Photos albums.
 
     Lightroom only ever reports deltas, and it reports them per collection, so this module
     also answers the questions a delta cannot: which collections publish a given photo, and
@@ -28,94 +27,30 @@ function M.isDefaultCollection(collection)
     return summary ~= nil and summary.isDefaultCollection == true
 end
 
---- The folder chain containing a published collection, outermost first.
----
---- Walks `getParent()` rather than reading `publishedCollectionInfo.parents`, whose ordering
---- the SDK does not document. Walking up and inserting at the front gives an order we can
---- rely on, which matters because each folder is created inside the one before it.
----
---- @param collection LrPublishedCollection|LrPublishedCollectionSet
---- @return table Array of {identifier, name, set}, outermost first
-function M.folderChain(collection)
-    local chain = {}
-    local parent = collection:getParent()
-    while parent do
-        table.insert(chain, 1, {
-            identifier = parent:getRemoteId(),
-            name = parent:getName(),
-            set = parent,
-        })
-        parent = parent:getParent()
-    end
-    return chain
-end
-
 --- The album target to send with a publish, mirroring this collection.
 ---
 --- Returns nil for the default collection, which has no album: publishing there means
 --- getting the photo into the library without filing it anywhere.
 ---
 --- @param collection LrPublishedCollection The collection being published
---- @return table|nil {identifier, name, folders}, or nil when there is no album
+--- @return table|nil {identifier, name}, or nil when there is no album
 function M.albumTarget(collection)
     if M.isDefaultCollection(collection) then
         return nil
     end
 
-    local chain = M.folderChain(collection)
-    local folders = {}
-    for _, folder in ipairs(chain) do
-        table.insert(folders, { identifier = folder.identifier, name = folder.name })
-    end
     return {
         identifier = collection:getRemoteId(),
         name = collection:getName(),
-        folders = folders,
     }
 end
 
---- Record the identifiers the helper resolved for a collection's folder chain.
----
---- Without this the next publish arrives with no folder identifier and the helper builds a
---- second folder beside the first. The chain and the reported folders are in the same order.
----
---- @param catalog LrCatalog The active catalog
---- @param collection LrPublishedCollection The collection that was published
---- @param folders table Array of {identifier, created} from the import result
-function M.recordFolderIdentifiers(catalog, collection, folders)
-    if not folders or #folders == 0 then
-        return
-    end
-
-    local chain = M.folderChain(collection)
-    catalog:withWriteAccessDo('Record Photos folder identifiers', function()
-        for index, folder in ipairs(folders) do
-            local link = chain[index]
-            if link and folder.identifier and link.identifier ~= folder.identifier then
-                link.set:setRemoteId(folder.identifier)
-                logger:info('Recorded folder ' .. link.name .. ' -> ' .. folder.identifier)
-            end
-        end
-    end)
-end
-
---- Every published collection in a service, including those nested in collection sets.
+--- Every published collection in a service.
+--- Collection sets are not offered, so these are all top level.
 --- @param publishService LrPublishService
 --- @return table Array of LrPublishedCollection
 function M.allCollections(publishService)
-    local collections = {}
-
-    local function visit(container)
-        for _, collection in ipairs(container:getChildCollections()) do
-            table.insert(collections, collection)
-        end
-        for _, set in ipairs(container:getChildCollectionSets()) do
-            visit(set)
-        end
-    end
-
-    visit(publishService)
-    return collections
+    return publishService:getChildCollections()
 end
 
 --- Every published collection in the service that publishes a photo with this remote id.
@@ -247,30 +182,6 @@ function M.reusableIdentifier(publishService, remoteId, excludeLocalId)
         return remoteId
     end
     return nil
-end
-
---- Resolve every folder leading to a collection, recording each identifier.
---- One helper launch per level, which is acceptable for a one-off panel action.
---- @param catalog LrCatalog The active catalog
---- @param collection LrPublishedCollection|LrPublishedCollectionSet
---- @return string|nil parentIdentifier The immediate parent folder, nil at the top level
---- @return table|nil failure The failing result, when resolution could not finish
-function M.ensureFolderChain(catalog, collection)
-    local parent = nil
-    for _, link in ipairs(M.folderChain(collection)) do
-        local result = Importer.ensureFolder(link.name, link.identifier, parent)
-        if result.status ~= Importer.STATUS_SUCCESS then
-            return nil, result
-        end
-        if result.identifier and result.identifier ~= link.identifier then
-            catalog:withWriteAccessDo('Record Photos folder', function()
-                link.set:setRemoteId(result.identifier)
-            end)
-            logger:info('Recorded folder ' .. link.name .. ' -> ' .. result.identifier)
-        end
-        parent = result.identifier
-    end
-    return parent
 end
 
 --- The album UUID for a deep link, with the trailing PhotoKit suffix removed.
