@@ -10,7 +10,7 @@
     each photo is stored as plugin metadata in the Lightroom catalog.
 
     Author: Brett Buddin <brett@buddin.org>
-    Version: 1.0.1
+    Version: 1.1.0
 ]]
 
 return {
@@ -42,7 +42,7 @@ return {
 
     VERSION = {
         major = 1,
-        minor = 0,
-        revision = 1,
+        minor = 1,
+        revision = 0,
     },
 }
