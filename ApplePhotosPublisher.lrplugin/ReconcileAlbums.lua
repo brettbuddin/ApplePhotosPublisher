@@ -55,6 +55,15 @@ local function selectedCollections(catalog)
     return collections
 end
 
+--- "1 album" rather than "1 album(s)", since this ends up in front of the user.
+--- @param n number
+--- @param singular string
+--- @param plural string
+--- @return string
+local function counted(n, singular, plural)
+    return n .. ' ' .. (n == 1 and singular or plural)
+end
+
 LrTasks.startAsyncTask(function()
     LrFunctionContext.callWithContext('reconcileAlbums', function()
         local catalog = LrApplication.activeCatalog()
@@ -75,11 +84,19 @@ LrTasks.startAsyncTask(function()
         logger:info('Reconciling ' .. #collections .. ' collections (' .. scope .. ')')
 
         local failures = {}
-        local reconciled = 0
+        local reconciled, skipped, repointed, deleted = 0, 0, 0, 0
         for _, collection in ipairs(collections) do
             local result = Albums.reconcile(collection)
             if result.status == Importer.STATUS_SUCCESS then
-                reconciled = reconciled + 1
+                if result.skipped then
+                    -- The default collection has no album, so it is not one of the albums
+                    -- this claims to have updated.
+                    skipped = skipped + 1
+                else
+                    reconciled = reconciled + 1
+                    repointed = repointed + (result.repointed or 0)
+                    deleted = deleted + (result.deleted or 0)
+                end
             else
                 local message = result.errorMessage or result.errorCode or 'Unknown error'
                 table.insert(failures, collection:getName() .. ': ' .. message)
@@ -92,13 +109,29 @@ LrTasks.startAsyncTask(function()
             end
         end
 
+        if reconciled == 0 and skipped > 0 and #failures == 0 then
+            LrDialogs.message('Nothing to reconcile',
+                'The Apple Photos collection has no album of its own, so there is nothing to '
+                .. 'bring back in line. Select an album you added instead.', 'info')
+            return
+        end
+
+        local summary = 'Updated ' .. counted(reconciled, 'album', 'albums')
+            .. ' in Apple Photos to match Lightroom.'
+        if repointed > 0 then
+            summary = summary .. '\n\nRe-linked ' .. counted(repointed, 'photo', 'photos')
+                .. ' that named an older copy.'
+        end
+        if deleted > 0 then
+            summary = summary .. '\n\nDeleted ' .. counted(deleted, 'copy', 'copies')
+                .. ' nothing publishes any more.'
+        end
+
         if #failures == 0 then
-            LrDialogs.message('Albums reconciled',
-                'Updated ' .. reconciled .. ' album(s) in Apple Photos to match Lightroom.', 'info')
+            LrDialogs.message('Albums reconciled', summary, 'info')
         else
             LrDialogs.message('Some albums could not be reconciled',
-                'Updated ' .. reconciled .. ' album(s).\n\n' .. table.concat(failures, '\n'),
-                'warning')
+                summary .. '\n\n' .. table.concat(failures, '\n'), 'warning')
         end
     end)
 end)

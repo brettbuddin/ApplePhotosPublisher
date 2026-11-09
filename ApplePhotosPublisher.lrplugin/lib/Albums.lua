@@ -323,6 +323,28 @@ function M.syncIdentifiers(catalog, repoints)
     return #repoints
 end
 
+--- Name the collections a batch of re-points touched, with a count each.
+--- One line however many photos moved, which a line per photo would not be.
+--- @param repoints table Array of {name}
+--- @return string
+function M.describeRepoints(repoints)
+    local counts = {}
+    local order = {}
+    for _, repoint in ipairs(repoints) do
+        if not counts[repoint.name] then
+            counts[repoint.name] = 0
+            table.insert(order, repoint.name)
+        end
+        counts[repoint.name] = counts[repoint.name] + 1
+    end
+
+    local parts = {}
+    for _, name in ipairs(order) do
+        table.insert(parts, name .. ': ' .. counts[name])
+    end
+    return table.concat(parts, ', ')
+end
+
 --- The album UUID for a deep link, with the trailing PhotoKit suffix removed.
 --- @param remoteId string|nil An album's local identifier
 --- @return string|nil The UUID portion
@@ -333,7 +355,7 @@ function M.albumUuid(remoteId)
     return remoteId:match('^[^/]+') or remoteId
 end
 
---- Set a collection's album membership to exactly the assets its photos have.
+--- Bring a collection's album, and the identifiers of everything in it, back in line.
 ---
 --- The repair path for drift Lightroom will never mention: an album edited in Photos, an
 --- album created for a collection whose photos were published before album sync existed, and
@@ -341,20 +363,29 @@ end
 --- photos rather than from this collection's own identifiers, so a collection that had
 --- drifted onto its own copy is brought back in line rather than having the drift confirmed.
 ---
+--- Re-pointing is not limited to this collection. The copy being dropped is about to be
+--- deleted, and leaving a sibling collection holding it would turn one kind of drift into
+--- another. Those copies are deleted for the same reason publishing deletes them: nothing
+--- publishes them any more, so nothing would ever be able to name them again.
+---
 --- @param collection LrPublishedCollection The collection to reconcile
---- @return table Result table from the helper
+--- @return table Result from the helper, plus skipped, adopted, repointed and deleted
 function M.reconcile(collection)
     if M.isDefaultCollection(collection) then
         -- No album, so nothing to reconcile against.
         logger:info('Skipping ' .. collection:getName() .. ', the default collection has no album')
-        return { status = Importer.STATUS_SUCCESS }
+        return { status = Importer.STATUS_SUCCESS, skipped = true }
     end
 
     local name = collection:getName()
     local catalog = collection.catalog
+    local index = M.buildIndex(catalog)
+
     local identifiers = {}
     local adoptions = {}
     local repoints = {}
+    local superseded = {}
+    local seen = {}
 
     for _, publishedPhoto in ipairs(collection:getPublishedPhotos()) do
         local photo = publishedPhoto:getPhoto()
@@ -369,11 +400,18 @@ function M.reconcile(collection)
 
         if identifier then
             table.insert(identifiers, identifier)
-            if rowId ~= identifier then
+            for _, entry in ipairs(M.staleEntries(index, photo, identifier, nil)) do
                 table.insert(repoints, {
-                    publishedPhoto = publishedPhoto,
+                    publishedPhoto = entry.publishedPhoto,
                     identifier = identifier,
+                    name = entry.collection:getName(),
                 })
+            end
+            for _, remoteId in ipairs(M.supersededAssets(index, photo, identifier)) do
+                if not seen[remoteId] then
+                    seen[remoteId] = true
+                    table.insert(superseded, remoteId)
+                end
             end
         end
     end
@@ -392,17 +430,36 @@ function M.reconcile(collection)
     end
 
     if #adoptions > 0 then
-        logger:info('Adopting ' .. Assets.record(catalog, adoptions) .. ' identifiers onto photos')
+        logger:info('Adopted ' .. Assets.record(catalog, adoptions) .. ' identifiers onto photos')
     end
     if #repoints > 0 then
         for _, repoint in ipairs(repoints) do
             repoint.url = M.assetUrl(albumIdentifier, repoint.identifier)
         end
-        logger:info('Re-pointing ' .. M.syncIdentifiers(catalog, repoints) .. ' photos in ' .. name)
+        logger:info('Re-pointed ' .. M.syncIdentifiers(catalog, repoints) .. ' photos ('
+            .. M.describeRepoints(repoints) .. ')')
     end
 
     logger:info('Reconciling ' .. name .. ' (' .. #identifiers .. ' photos)')
-    return Importer.syncAlbum(albumIdentifier, identifiers)
+    local result = Importer.syncAlbum(albumIdentifier, identifiers)
+    if result.status ~= Importer.STATUS_SUCCESS then
+        return result
+    end
+    result.adopted = #adoptions
+    result.repointed = #repoints
+
+    -- Last, and only once the album is right: a failure before this point leaves assets that
+    -- something can still be pointed back at.
+    if #superseded > 0 then
+        logger:info('Deleting ' .. #superseded .. ' superseded assets')
+        local deleted = Importer.deletePhotos(superseded)
+        if deleted.status ~= Importer.STATUS_SUCCESS then
+            return deleted
+        end
+        result.deleted = deleted.deletedCount
+    end
+
+    return result
 end
 
 return M

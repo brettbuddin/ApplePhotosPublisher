@@ -83,6 +83,33 @@ struct AlbumMembershipTests {
         #expect(await mock.assetIdentifiers(inAlbum: "alb-1") == ["a", "c"])
     }
 
+    // MARK: - Reconcile
+
+    /// Reconciling adds what the album is missing and takes out what it should not hold.
+    @Test func syncSetsTheAlbumToExactlyWhatWasAskedFor() async throws {
+        let mock = MockPhotoLibrary()
+        mock.albumContents["alb-1"] = ["a", "b"]
+
+        try await AlbumSync.apply(photoKit: mock, identifier: "alb-1", assets: ["a", "c"])
+
+        #expect(await mock.assetIdentifiers(inAlbum: "alb-1") == ["a", "c"])
+        #expect(mock.addAssetCalls.map(\.0) == ["c"])
+    }
+
+    /// A photo Lightroom still claims but Photos no longer has must not abandon the rest of
+    /// the album, which by then has already had its surplus removed.
+    @Test func syncCarriesOnPastAPhotoPhotosNoLongerHas() async throws {
+        let mock = MockPhotoLibrary()
+        mock.albumContents["alb-1"] = ["a", "surplus"]
+        mock.existingAssets = ["a", "live"]
+
+        try await AlbumSync.apply(
+            photoKit: mock, identifier: "alb-1", assets: ["a", "deleted", "live"])
+
+        #expect(await mock.assetIdentifiers(inAlbum: "alb-1") == ["a", "live"])
+        #expect(mock.addAssetCalls.map(\.0) == ["deleted", "live"])
+    }
+
     // MARK: - Reuse
 
     /// A photo merely added to another collection keeps its asset, so the collections already

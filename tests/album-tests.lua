@@ -32,7 +32,21 @@ stubs['lib/Importer'] = {
         table.insert(importerCalls, { command = 'sync', identifier = identifier, assets = identifiers })
         return { status = 'success' }
     end,
+    deletePhotos = function(identifiers)
+        table.insert(importerCalls, { command = 'delete', assets = identifiers })
+        return { status = 'success', deletedCount = #identifiers }
+    end,
 }
+
+--- The last call the helper stub saw for a command, or nil.
+local function called(command)
+    for i = #importerCalls, 1, -1 do
+        if importerCalls[i].command == command then
+            return importerCalls[i]
+        end
+    end
+    return nil
+end
 
 local Assets = dofile('ApplePhotosPublisher.lrplugin/lib/Assets.lua')
 loaded['lib/Assets'] = Assets
@@ -255,16 +269,33 @@ print('PASS: the asset on a photo is written privately, and only when it changes
 -- so a collection that drifted onto its own copy is brought back in line.
 fixture = splitFixture()
 importerCalls = {}
-assert(Albums.reconcile(fixture.album).status == 'success')
-local sync = importerCalls[#importerCalls]
-assert(sync.command == 'sync' and sync.identifier == 'disney-album/L0/040')
+local reconciled = Albums.reconcile(fixture.album)
+assert(reconciled.status == 'success' and not reconciled.skipped)
+local sync = called('sync')
+assert(sync.identifier == 'disney-album/L0/040')
 assert(#sync.assets == 1 and sync.assets[1] == 'edited/L0/001')
 assert(fixture.inAlbum.remoteId == 'edited/L0/001', 'the drifted row should be re-pointed')
 assert(fixture.inAlbum.url == 'photos:albums?albumUuid=disney-album&assetUuid=edited')
+assert(reconciled.repointed == 1 and reconciled.adopted == 0)
 
--- The default collection has no album to reconcile against.
+-- The copy it just dropped has to go with it. Re-pointing takes away the last reference to
+-- it, so leaving it behind strands it in the library with nothing able to name it again.
+local deletedCall = called('delete')
+assert(deletedCall and #deletedCall.assets == 1, 'the superseded copy should be deleted')
+assert(deletedCall.assets[1] == 'pre-edit/L0/001')
+assert(reconciled.deleted == 1)
+
+-- The album has to be right before anything is deleted, since a failure up to that point
+-- leaves assets something can still be pointed back at.
+local order = {}
+for _, call in ipairs(importerCalls) do table.insert(order, call.command) end
+assert(table.concat(order, ' '):find('sync delete', 1, true), table.concat(order, ' '))
+
+-- The default collection has no album to reconcile against, and is not one of the albums the
+-- menu action then claims to have updated.
 importerCalls = {}
-assert(Albums.reconcile(fixture.default).status == 'success')
+local skippedResult = Albums.reconcile(fixture.default)
+assert(skippedResult.status == 'success' and skippedResult.skipped == true)
 assert(#importerCalls == 0)
 
 -- A collection published before the asset moved onto the photo has nothing to read, so the
@@ -274,10 +305,12 @@ local legacyPublished = newPublishedPhoto(legacyPhoto, 'legacy/L0/001')
 local legacy = newCollection('Halloween 23', { legacyPublished }, { remoteId = 'legacy-album/L0/040' })
 newCatalog({ legacy })
 importerCalls = {}
-assert(Albums.reconcile(legacy).status == 'success')
+local adopted = Albums.reconcile(legacy)
+assert(adopted.status == 'success' and adopted.adopted == 1)
 assert(Assets.identifier(legacyPhoto) == 'legacy/L0/001')
-assert(importerCalls[#importerCalls].assets[1] == 'legacy/L0/001')
+assert(called('sync').assets[1] == 'legacy/L0/001')
 assert(legacyPublished.writes == 0, 'the row already agreed, so it should not be written')
+assert(called('delete') == nil, 'adopting an identifier supersedes nothing')
 
 -- A collection that has never been published has no album yet, so one is made and recorded.
 local fresh = newCollection('Food Truck', {})
@@ -286,7 +319,24 @@ importerCalls = {}
 assert(Albums.reconcile(fresh).status == 'success')
 assert(importerCalls[1].command == 'ensure' and importerCalls[1].identifier == nil)
 assert(fresh.remoteId == 'new-album/L0/040')
+assert(called('delete') == nil)
 print('PASS: reconcile follows the photos, adopts legacy rows and creates a missing album')
+
+-- Re-pointing is not limited to the collection being reconciled. The copy being dropped is
+-- about to be deleted, so a sibling left holding it would be the next thing to break.
+local shared2 = newPhoto('current/L0/001')
+local inFirst = newPublishedPhoto(shared2, 'current/L0/001')
+local inSecond = newPublishedPhoto(shared2, 'older/L0/001')
+local first = newCollection('Trip', { inFirst }, { remoteId = 'trip-album/L0/040' })
+local second = newCollection('Favorites', { inSecond }, { remoteId = 'favorites-album/L0/040' })
+newCatalog({ first, second })
+importerCalls = {}
+local spread = Albums.reconcile(first)
+assert(spread.status == 'success' and spread.repointed == 1)
+assert(inSecond.remoteId == 'current/L0/001', 'the sibling collection should be re-pointed too')
+assert(inSecond.edited == false)
+assert(called('delete').assets[1] == 'older/L0/001')
+print('PASS: reconcile re-points every collection and deletes what it orphans')
 
 -- Deep links name the album the asset was published through, falling back to the library.
 assert(Albums.assetUrl('album-uuid/L0/040', 'asset-uuid/L0/001')

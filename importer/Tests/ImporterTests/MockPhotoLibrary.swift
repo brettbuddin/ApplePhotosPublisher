@@ -95,6 +95,11 @@ final class MockPhotoLibrary: PhotoLibrary, @unchecked Sendable {
     func addAsset(identifier: String, toAlbum albumIdentifier: String) async throws {
         addAssetCalls.append((identifier, albumIdentifier))
         if let error = addAssetError { throw error }
+        // The real accessor fetches the asset first and reports it missing, which is what
+        // callers have to cope with when Lightroom names a photo Photos no longer has.
+        if let existingAssets, !existingAssets.contains(identifier) {
+            throw PhotoKitError.assetNotFound(identifier: identifier)
+        }
         albumContents[albumIdentifier, default: []].append(identifier)
     }
 

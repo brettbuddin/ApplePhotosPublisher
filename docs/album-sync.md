@@ -378,10 +378,19 @@ and matching by name there would silently absorb an unrelated album the user hap
 called "Family 2026". The tradeoff is that an album deleted in Photos comes back empty rather
 than reconnecting, and refills over subsequent publishes or in one step via reconcile.
 
-Reconcile is the repair for identifiers as well as membership: it sets the album to the assets
-its photos have, points any collection that drifted at the asset its photo holds, and adopts a
+Reconcile is the repair for identifiers as well as membership. It sets the album to the assets
+its photos have, points every collection that drifted at the asset its photo holds, adopts a
 `remoteId` onto a photo that has none, which is the state a catalog published before
-`photosLocalIdentifier` existed would be in.
+`photosLocalIdentifier` existed would be in, and then deletes the copies it has just dropped
+the last reference to.
+
+That deletion is the same rule publishing applies, for the same reason: re-pointing a drifted
+collection takes away the only thing that named its copy, so leaving it behind strands it in
+the library with nothing able to find it again. It happens after the album is right, so a
+failure up to that point leaves every asset something can still be pointed back at.
+
+Reconcile also carries on past a photo Lightroom claims that Photos no longer has, rather than
+abandoning the rest of the album after having already removed its surplus.
 
 ## Measured on macOS 27.3
 
@@ -505,6 +514,8 @@ Manual scenarios against a real library:
   fails with a message rather than an empty import, then succeeds on a second publish.
 - Delete the album in Photos and republish to confirm the recreate path.
 - Edit an album in Photos and run reconcile.
+- Run reconcile with the built-in `Apple Photos` collection selected and confirm it says there
+  is nothing to reconcile rather than counting it as an album it updated.
 - Upgrade an established catalog and confirm reconcile backfills the existing album.
 
 ## Deferred

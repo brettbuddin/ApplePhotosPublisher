@@ -94,27 +94,6 @@ local function addIdentifier(list, value)
     end
 end
 
---- Name the collections a batch of re-points touched, with a count each.
---- @param repoints table Array of {name}
---- @return string
-local function describeRepoints(repoints)
-    local counts = {}
-    local order = {}
-    for _, repoint in ipairs(repoints) do
-        if not counts[repoint.name] then
-            counts[repoint.name] = 0
-            table.insert(order, repoint.name)
-        end
-        counts[repoint.name] = counts[repoint.name] + 1
-    end
-
-    local parts = {}
-    for _, name in ipairs(order) do
-        table.insert(parts, name .. ': ' .. counts[name])
-    end
-    return table.concat(parts, ', ')
-end
-
 --- Lightroom publish/export service provider table.
 --- @class PhotosServiceProvider
 local provider = {}
@@ -472,7 +451,7 @@ function provider.processRenderedPhotos(functionContext, exportContext)
             Albums.syncIdentifiers, catalog, outcome.repoints)
         if repointed then
             logger:info('Re-pointed ' .. repointed .. ' photos in other collections ('
-                .. describeRepoints(outcome.repoints) .. ')')
+                .. Albums.describeRepoints(outcome.repoints) .. ')')
         end
     end
 

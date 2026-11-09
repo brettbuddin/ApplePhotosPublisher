@@ -37,6 +37,41 @@ enum CollectionRunner {
     }
 }
 
+/// Setting an album's contents to exactly what Lightroom says it should hold.
+///
+/// Apart from the command plumbing so it can be tested directly: this is the one operation
+/// here that is partway through something after its first write, and what it does with a
+/// photo Photos no longer has is the whole question.
+enum AlbumSync {
+
+    /// Removes what the album should not hold, then adds what it is missing.
+    ///
+    /// A photo Lightroom still claims but Photos no longer has is reported and skipped.
+    /// Failing instead would abandon the rest of the album having already taken the surplus
+    /// out, which leaves it further from what was asked for than when it started.
+    static func apply(
+        photoKit: any PhotoLibrary, identifier: String, assets: [String]
+    ) async throws {
+        let wanted = Set(assets.map(\.uuidPrefix))
+        let present = await photoKit.assetIdentifiers(inAlbum: identifier)
+        let presentPrefixes = Set(present.map(\.uuidPrefix))
+
+        let surplus = present.filter { !wanted.contains($0.uuidPrefix) }
+        if !surplus.isEmpty {
+            try await photoKit.removeAssets(identifiers: surplus, fromAlbum: identifier)
+        }
+
+        for asset in assets where !presentPrefixes.contains(asset.uuidPrefix) {
+            do {
+                try await photoKit.addAsset(identifier: asset, toAlbum: identifier)
+            } catch PhotoKitError.assetNotFound {
+                let msg = "Warning: \(asset) is no longer in Photos\n"
+                FileHandle.standardError.write(Data(msg.utf8))
+            }
+        }
+    }
+}
+
 /// Manages the Photos album that mirrors a Lightroom published collection.
 struct AlbumCommand: AsyncParsableCommand {
     static var configuration = CommandConfiguration(
@@ -141,17 +176,8 @@ struct AlbumCommand: AsyncParsableCommand {
         mutating func run() async {
             let (identifier, assets) = (self.identifier, self.assets)
             print(await CollectionRunner.run { photoKit in
-                let wanted = Set(assets.map(\.uuidPrefix))
-                let present = await photoKit.assetIdentifiers(inAlbum: identifier)
-                let presentPrefixes = Set(present.map(\.uuidPrefix))
-
-                let surplus = present.filter { !wanted.contains($0.uuidPrefix) }
-                if !surplus.isEmpty {
-                    try await photoKit.removeAssets(identifiers: surplus, fromAlbum: identifier)
-                }
-                for asset in assets where !presentPrefixes.contains(asset.uuidPrefix) {
-                    try await photoKit.addAsset(identifier: asset, toAlbum: identifier)
-                }
+                try await AlbumSync.apply(
+                    photoKit: photoKit, identifier: identifier, assets: assets)
                 return nil
             })
         }
