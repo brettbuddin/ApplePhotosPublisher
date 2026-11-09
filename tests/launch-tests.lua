@@ -11,7 +11,23 @@ end }
 modules.LrTasks = { execute = function(command) return execute(command) end }
 modules.LrPathUtils = { child = function(parent, child) return parent .. '/' .. child end }
 modules.LrDate = { currentTime = function() return 1 end }
-modules.LrXml = {}
+modules.LrPathUtils.getStandardFilePath = function() return '/tmp' end
+-- Minimal stand-in for LrXml's builder, enough to inspect the manifest we produce.
+modules.LrXml = { createXmlBuilder = function()
+    local parts, stack, builder = {}, {}, {}
+    function builder:beginBlock(name)
+        table.insert(stack, name)
+        table.insert(parts, '<' .. name .. '>')
+    end
+    function builder:endBlock()
+        table.insert(parts, '</' .. table.remove(stack) .. '>')
+    end
+    function builder:tag(name, value)
+        table.insert(parts, '<' .. name .. '>' .. tostring(value) .. '</' .. name .. '>')
+    end
+    function builder:serialize() return table.concat(parts) end
+    return builder
+end }
 local Shell = dofile('ApplePhotosPublisher.lrplugin/lib/Shell.lua')
 local function write(path, content)
     local file = assert(io.open(path, 'w'))
@@ -60,23 +76,40 @@ assert(invalid == nil)
 local normalExit = { state = 'exited', exitCode = 0, rawStatus = 0 }
 local response = { 0, '<success/>', 'warning', normalExit }
 local receivedOutput
+local lastArgs, lastManifest
 local stubs = {
     ['lib/Shell'] = { executeAppWithOutput = function(app, args)
         assert(app == '/plugin/bin/Apple Photos Publisher for Lightroom Classic.app')
-        assert(args[1] == 'delete' and args[2] == "photo'id")
+        lastArgs = args
+        -- Read the manifest while it still exists; the importer deletes it on return.
+        lastManifest = nil
+        for index, value in ipairs(args) do
+            if value == '--manifest' and args[index + 1] then
+                local file = io.open(args[index + 1], 'r')
+                if file then
+                    lastManifest = file:read('*a')
+                    file:close()
+                end
+            end
+        end
         return unpackValues(response)
     end },
     ['lib/XML'] = { parseDeleteResult = function(xml)
         receivedOutput = xml
         return xml == '<success/>' and { status = 'success', deletedCount = 1 } or {}
+    end, parseBatchImportResult = function(xml)
+        return xml == '<success/>' and { status = 'success', results = {} } or {}
+    end, parseCollectionResult = function(xml)
+        return xml == '<success/>' and { status = 'success', identifier = 'alb-1' } or {}
     end },
-    ['lib/Logger'] = { info = function() end },
+    ['lib/Logger'] = { info = function() end, error = function() end },
 }
 package.loaded.PluginModuleLoader = function(name) return assert(stubs[name], name) end
 _PLUGIN = { path = '/plugin' }
 local Importer = dofile('ApplePhotosPublisher.lrplugin/lib/Importer.lua')
 assert(Importer.deletePhotos({ "photo'id" }).status == 'success')
 assert(receivedOutput == '<success/>')
+assert(lastArgs[1] == 'delete' and lastArgs[2] == "photo'id")
 response = { 256, '', 'app not found', { state = 'startupFailed' } }
 local result = Importer.deletePhotos({ "photo'id" })
 assert(result.errorCode == 'LAUNCH_FAILED')
@@ -97,6 +130,65 @@ response = { 0, '<success/>', '' }
 result = Importer.deletePhotos({ "photo'id" })
 assert(result.status == 'error' and result.errorCode == 'MONITOR_FAILED')
 print('PASS: confirmed success, startup failure, missing XML/status, signal vs exit code, crash after success XML')
+
+-- The album rides along in the manifest, so creating the album, importing and setting
+-- membership all happen in the one launch publishing already costs.
+response = { 0, '<success/>', '', normalExit }
+assert(Importer.importPhotos({
+    { path = '/tmp/a.jpg', previousIdentifier = 'prev-1' },
+    { path = '/tmp/b.jpg', reuseIdentifier = 'live-1' },
+}, {
+    identifier = 'alb-1',
+    name = 'Family 2026',
+}).status == 'success')
+assert(lastManifest, 'manifest should have been written')
+assert(lastManifest:find('<album><identifier>alb-1</identifier><name>Family 2026</name></album>', 1, true))
+assert(lastManifest:find('<previousIdentifier>prev-1</previousIdentifier>', 1, true))
+assert(lastManifest:find('<reuseIdentifier>live-1</reuseIdentifier>', 1, true))
+
+-- An absent identifier must stay absent: an empty tag would read as a real identifier on
+-- the other side rather than "never published".
+Importer.importPhotos({ { path = '/tmp/a.jpg' } }, { name = 'Trip' })
+assert(not lastManifest:find('<identifier>', 1, true))
+assert(not lastManifest:find('previousIdentifier', 1, true))
+
+-- Publishing without an album leaves the block out entirely.
+Importer.importPhotos({ { path = '/tmp/a.jpg' } }, nil)
+assert(not lastManifest:find('<album>', 1, true))
+print('PASS: manifest album block, reuse and omitted identifiers')
+
+-- Collection commands build their own argument lists.
+assert(Importer.ensureAlbum('Family', 'alb-1').identifier == 'alb-1')
+assert(table.concat(lastArgs, ' ') == 'album ensure --name Family --identifier alb-1')
+Importer.ensureAlbum('Family')
+assert(table.concat(lastArgs, ' ') == 'album ensure --name Family')
+Importer.renameAlbum('alb-1', 'New Name')
+assert(table.concat(lastArgs, ' ') == 'album rename --identifier alb-1 --name New Name')
+Importer.deleteAlbum('alb-1')
+assert(table.concat(lastArgs, ' ') == 'album delete --identifier alb-1')
+Importer.removeFromAlbum('alb-1', { 'a', 'b' })
+assert(table.concat(lastArgs, ' ') == 'album remove --identifier alb-1 a b')
+Importer.syncAlbum('alb-1', { 'a' })
+assert(table.concat(lastArgs, ' ') == 'album sync --identifier alb-1 a')
+
+-- Removing nothing should not launch the helper at all.
+lastArgs = nil
+assert(Importer.removeFromAlbum('alb-1', {}).status == 'success')
+assert(lastArgs == nil)
+
+-- A refused confirmation dialog has to stay distinguishable from a fault, because the
+-- plugin words the two differently.
+assert(Importer.isUserCancelled({ status = 'error', errorCode = 'USER_CANCELLED' }))
+assert(not Importer.isUserCancelled({ status = 'error', errorCode = 'DELETE_FAILED' }))
+assert(not Importer.isUserCancelled({ status = 'success' }))
+assert(not Importer.isAuthorizationError({ status = 'error', errorCode = 'USER_CANCELLED' }))
+
+-- A photo whose reusable asset has been deleted needs its identifier dropped rather than a
+-- retry, since the run that reported it skipped the render.
+assert(Importer.isReuseMissing({ status = 'error', errorCode = 'REUSE_MISSING' }))
+assert(not Importer.isReuseMissing({ status = 'error', errorCode = 'FILE_NOT_FOUND' }))
+assert(not Importer.isReuseMissing({ status = 'success' }))
+print('PASS: album command arguments, empty removal, cancellation and reuse classification')
 
 if arg[1] == '--integration' then
     -- Execute the real launch path with non-mutating commands only. Test a

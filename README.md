@@ -2,7 +2,7 @@
 
 # ApplePhotosPublisher
 
-Lightroom Classic Publish Service plugin for Apple Photos. Publish photos to Apple Photos and republish to update them with new edits. Album memberships and favorite status in Apple Photos is preserved when images are republished, but all edits are replaced.
+Lightroom Classic Publish Service plugin for Apple Photos. Publish photos to Apple Photos and republish to update them with new edits. Published collections appear as albums in Apple Photos. Album memberships and favorite status in Apple Photos is preserved when images are republished, but all edits are replaced.
 
 I use this plugin to manage edits shared with family and to have edits show up in Apple Photos Memories widgets across the ecosystem.
 
@@ -34,7 +34,31 @@ When publishing, the plugin renders photos as full-quality JPEGs and imports the
 
 When republishing, album memberships and favorite status in Apple Photos are preserved and the old version is replaced. Changes to title, caption, keywords, GPS, date, or rating will mark a photo for republish.
 
-Removing a photo from the publish collection deletes it from Apple Photos.
+### Albums
+
+Collections you add are mirrored as albums in Apple Photos.
+
+The built-in **Apple Photos** collection is the exception and gets no album. Publishing there means "put this in my Photos library without filing it anywhere". Use it for photos you want in Photos but not organized, and use collections for the ones you want gathered into albums.
+
+Renaming a collection renames its album. Deleting one deletes the album but keeps the photos, unless no other collection still publishes them.
+
+A photo added to a second collection keeps the asset it already has rather than being imported again, so both albums show the same photo and neither collection is left pointing at a replaced version.
+
+Album deletion goes through the same macOS confirmation dialog as photo deletion, so deleting a collection asks before changing anything in Photos. Declining leaves Photos untouched and Lightroom offers to undo the change.
+
+### Reconciling Albums
+
+Lightroom only reports what changed, so an album can drift out of step with its collection: one created for a collection whose photos were published earlier starts out empty, and editing an album directly in Photos is invisible to Lightroom.
+
+**Library > Plug-in Extras > Reconcile Apple Photos Albums** sets each album's photos to exactly what its collection holds. It reconciles the published collections selected in the panel, or every one of them when nothing is selected.
+
+### Removing Photos
+
+Removing a photo from a collection takes it out of that collection's album. The photo is only deleted from Apple Photos once no collection in the service still publishes it, so moving a photo between albums never destroys it.
+
+That gives two outcomes worth knowing. A photo published only through a collection, removed from it, is deleted from Apple Photos. The same photo also in the **Apple Photos** collection is kept instead, and simply becomes an unfiled photo in your library.
+
+Moving an album in Photos is up to you and does not break anything. Lightroom decides where an album is first created, from the collection's place in the panel, and leaves it alone afterwards.
 
 ### Photos Library Access
 

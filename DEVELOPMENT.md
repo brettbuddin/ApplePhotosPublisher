@@ -97,7 +97,17 @@ Use `authorize --check-library` to also validate the Photos service connection w
 
 Test the Lua launch/capture behavior with `lua tests/launch-tests.lua`. These tests simulate the launcher and do not access Photos. After building a release, use `lua tests/launch-tests.lua --integration` to also exercise Launch Services with the built helper and an empty import manifest.
 
+Test the mapping between Lightroom's published photos and Photos assets with `lua tests/album-tests.lua`. These stand in for the SDK objects, so they need neither Lightroom nor Photos, and they cover the parts that decide which asset a photo has, which collections have to be told about a replacement and which assets are left over to delete.
+
 Run `python3 tests/monitor-tests.py <path-to-lrphotoslauncher>` to test real Launch Services launches, exit codes, fatal signals, crashes after XML, startup failures, and repeated fast commands. The test builds a disposable app with the production handshake code and never accesses Photos. `swift test` also checks wait-status decoding and failure when the launcher never acknowledges.
+
+Run `python3 tests/collection-probe.py` to measure which PhotoKit collection operations raise a macOS confirmation dialog. Unlike the scripts above, this one does access Photos: it builds a disposable app under the bundle identifier `org.buddin.lrphotossync.collection-probe`, so macOS asks for access on the first run and the production helper's grant is untouched. It creates an album and a folder of its own, borrows the newest image into that album and takes it back out, then deletes both containers. Watch the screen and allow anything it asks for. Read the report by duration: an operation that blocked on a dialog takes human-scale time, a silent one takes milliseconds.
+
+Pass `--open-url` to also check whether `photos:albums?albumUuid=<uuid>` selects an album, `--rebuild` to recompile, and `--build-only` to verify the fixture still compiles without touching Photos.
+
+`--decline` runs a separate flow that asks you to refuse a deletion dialog, which reports what a refusal looks like to the caller. Its instructions contradict the normal run, so read them: refuse the first dialog, allow the second. A refused deletion leaves the album behind, so `--cleanup` sweeps up anything titled `PhotoKit Probe` that a cancelled run left in the library, in one dialog however much it finds.
+
+Editing the fixture changes the ad-hoc signature's cdhash, which invalidates the grant filed under the probe's bundle identifier; TCC then denies the new identity outright rather than prompting again. The build step clears the probe's entry for that reason, so expect a fresh permission prompt after every recompile. Remove the grant when you are done with `tccutil reset Photos org.buddin.lrphotossync.collection-probe`.
 
 ## Releasing
 

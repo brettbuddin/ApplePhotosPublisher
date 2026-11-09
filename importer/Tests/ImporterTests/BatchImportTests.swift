@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import lrphotosimporter
 
-/// Tests for the batch import workflow in ``ImportCommand/executeBatchImport(photoKit:photos:)``.
+/// Tests for the batch import workflow in ``ImportCommand/executeBatchImport(photoKit:manifest:)``.
 @Suite("BatchImport")
 struct BatchImportTests {
 
@@ -15,7 +15,7 @@ struct BatchImportTests {
     @Test func emptyPhotos() async throws {
         let mock = MockPhotoLibrary()
         let cmd = ImportCommand()
-        let xml = await cmd.executeBatchImport(photoKit: mock, photos: [])
+        let xml = await cmd.executeBatchImport(photoKit: mock, manifest: Manifest(album: nil, photos: []))
         let root = try parseResult(xml)
         #expect(root.name == "batchImportResult")
         #expect(root.elements(forName: "status").first?.stringValue == "success")
@@ -30,7 +30,7 @@ struct BatchImportTests {
 
         let cmd = ImportCommand()
         let photos = [ManifestPhoto(path: "/tmp/a.jpg", previousIdentifier: nil)]
-        let xml = await cmd.executeBatchImport(photoKit: mock, photos: photos)
+        let xml = await cmd.executeBatchImport(photoKit: mock, manifest: Manifest(album: nil, photos: photos))
         let root = try parseResult(xml)
         #expect(root.elements(forName: "status").first?.stringValue == "error")
         #expect(root.elements(forName: "errorCode").first?.stringValue == "WRITE_AUTH_DENIED")
@@ -43,7 +43,7 @@ struct BatchImportTests {
 
         let cmd = ImportCommand()
         let photos = [ManifestPhoto(path: "/tmp/a.jpg", previousIdentifier: nil)]
-        let xml = await cmd.executeBatchImport(photoKit: mock, photos: photos)
+        let xml = await cmd.executeBatchImport(photoKit: mock, manifest: Manifest(album: nil, photos: photos))
         let root = try parseResult(xml)
         #expect(root.elements(forName: "status").first?.stringValue == "error")
         #expect(root.elements(forName: "errorCode").first?.stringValue == "WRITE_AUTH_LIMITED")
@@ -60,7 +60,7 @@ struct BatchImportTests {
 
         let cmd = ImportCommand()
         let photos = [ManifestPhoto(path: "/tmp/a.jpg", previousIdentifier: nil)]
-        let xml = await cmd.executeBatchImport(photoKit: mock, photos: photos)
+        let xml = await cmd.executeBatchImport(photoKit: mock, manifest: Manifest(album: nil, photos: photos))
         let root = try parseResult(xml)
         #expect(root.elements(forName: "status").first?.stringValue == "error")
         #expect(root.elements(forName: "errorCode").first?.stringValue == "AUTH_ERROR")
@@ -86,7 +86,7 @@ struct BatchImportTests {
             ManifestPhoto(path: file1.path, previousIdentifier: nil),
             ManifestPhoto(path: file2.path, previousIdentifier: nil)
         ]
-        let xml = await cmd.executeBatchImport(photoKit: mock, photos: photos)
+        let xml = await cmd.executeBatchImport(photoKit: mock, manifest: Manifest(album: nil, photos: photos))
         let root = try parseResult(xml)
         #expect(root.elements(forName: "status").first?.stringValue == "success")
         let results = try #require(root.elements(forName: "results").first)
@@ -111,7 +111,7 @@ struct BatchImportTests {
             ManifestPhoto(path: tmp.path, previousIdentifier: nil),
             ManifestPhoto(path: "/nonexistent/missing.jpg", previousIdentifier: nil)
         ]
-        let xml = await cmd.executeBatchImport(photoKit: mock, photos: photos)
+        let xml = await cmd.executeBatchImport(photoKit: mock, manifest: Manifest(album: nil, photos: photos))
         let root = try parseResult(xml)
         #expect(root.elements(forName: "status").first?.stringValue == "success")
         let results = try #require(root.elements(forName: "results").first)
@@ -134,7 +134,7 @@ struct BatchImportTests {
 
         let cmd = ImportCommand()
         let photos = [ManifestPhoto(path: tmp.path, previousIdentifier: "prev-id")]
-        let xml = await cmd.executeBatchImport(photoKit: mock, photos: photos)
+        let xml = await cmd.executeBatchImport(photoKit: mock, manifest: Manifest(album: nil, photos: photos))
         let root = try parseResult(xml)
         let results = try #require(root.elements(forName: "results").first)
         let resultElements = results.elements(forName: "result")

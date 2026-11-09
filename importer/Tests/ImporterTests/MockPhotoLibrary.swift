@@ -95,9 +95,99 @@ final class MockPhotoLibrary: PhotoLibrary, @unchecked Sendable {
     func addAsset(identifier: String, toAlbum albumIdentifier: String) async throws {
         addAssetCalls.append((identifier, albumIdentifier))
         if let error = addAssetError { throw error }
+        // The real accessor fetches the asset first and reports it missing, which is what
+        // callers have to cope with when Lightroom names a photo Photos no longer has.
+        if let existingAssets, !existingAssets.contains(identifier) {
+            throw PhotoKitError.assetNotFound(identifier: identifier)
+        }
+        albumContents[albumIdentifier, default: []].append(identifier)
     }
 
     func userLibraryAlbumIdentifier() async -> String? {
         return userLibraryAlbumIdentifierReturn
+    }
+
+    // MARK: - Collections
+
+    /// Identifiers this mock reports as still present, consulted by ``assetExists(identifier:)``.
+    /// `nil` means every asset exists.
+    var existingAssets: Set<String>?
+
+    /// Albums keyed by identifier, holding their asset identifiers in order.
+    var albumContents: [String: [String]] = [:]
+
+    /// Albums and folders this mock knows about, keyed by identifier, valued by title.
+    var collectionTitles: [String: String] = [:]
+
+    /// Identifier handed out by the next create. Each create appends a counter to it.
+    var createdIdentifierPrefix = "created"
+
+    var ensureAlbumError: Error?
+    var renameError: Error?
+    var deleteCollectionError: Error?
+    var removeAssetsError: Error?
+
+    /// A recorded ``ensureAlbum(identifier:name:)`` call.
+    struct ResolveCall: Equatable {
+        let identifier: String?
+        let name: String
+    }
+
+    var ensureAlbumCalls: [ResolveCall] = []
+    var renameCalls: [(identifier: String, name: String)] = []
+    var deleteCollectionCalls: [String] = []
+    var removeAssetsCalls: [(identifiers: [String], album: String)] = []
+    private var createCount = 0
+
+    func assetExists(identifier: String) async -> Bool {
+        guard let existingAssets else { return true }
+        return existingAssets.contains(identifier)
+    }
+
+    private func nextIdentifier() -> String {
+        createCount += 1
+        return "\(createdIdentifierPrefix)-\(createCount)"
+    }
+
+    /// Mirrors the accessor's found-or-created sequence.
+    func ensureAlbum(identifier: String?, name: String) async throws -> CollectionRef {
+        ensureAlbumCalls.append(ResolveCall(identifier: identifier, name: name))
+        if let error = ensureAlbumError { throw error }
+
+        let ref: CollectionRef
+        if let identifier, collectionTitles[identifier] != nil {
+            collectionTitles[identifier] = name
+            ref = CollectionRef(identifier: identifier, created: false)
+        } else {
+            let created = nextIdentifier()
+            collectionTitles[created] = name
+            ref = CollectionRef(identifier: created, created: true)
+        }
+        if albumContents[ref.identifier] == nil { albumContents[ref.identifier] = [] }
+        return ref
+    }
+
+    func renameAlbum(identifier: String, to name: String) async throws {
+        renameCalls.append((identifier, name))
+        if let error = renameError { throw error }
+        collectionTitles[identifier] = name
+    }
+
+    func deleteAlbum(identifier: String) async throws {
+        deleteCollectionCalls.append(identifier)
+        if let error = deleteCollectionError { throw error }
+        collectionTitles[identifier] = nil
+        albumContents[identifier] = nil
+    }
+
+    func assetIdentifiers(inAlbum identifier: String) async -> [String] {
+        return albumContents[identifier] ?? []
+    }
+
+    func removeAssets(identifiers: [String], fromAlbum identifier: String) async throws {
+        removeAssetsCalls.append((identifiers, identifier))
+        if let error = removeAssetsError { throw error }
+        let removing = Set(identifiers)
+        albumContents[identifier] = (albumContents[identifier] ?? []).filter { !removing.contains($0) }
     }
 }

@@ -35,6 +35,15 @@ local AUTHORIZATION_ERROR_CODES = {
     WRITE_AUTH_RESTRICTED = true,
 }
 
+--- Error code the helper returns when the user dismissed the macOS confirmation dialog.
+--- Deleting an album always raises that dialog, so a refusal is an ordinary
+--- outcome and has to be worded differently from a fault.
+local USER_CANCELLED = 'USER_CANCELLED'
+
+--- Error code the helper returns for a photo whose reusable asset has been deleted in
+--- Photos, leaving a skipped render with nothing to import.
+local REUSE_MISSING = 'REUSE_MISSING'
+
 --- Names for the signals a crashed importer is likely to die from.
 local SIGNAL_NAMES = {
     [1] = 'SIGHUP',
@@ -149,19 +158,33 @@ local function getAppPath()
     return LrPathUtils.child(binDir, 'Apple Photos Publisher for Lightroom Classic.app')
 end
 
+--- Write an identifier tag only when there is one, since an empty value would read as a
+--- real identifier on the other side rather than "never published".
+local function optionalTag(builder, name, value)
+    if value and value ~= '' then
+        builder:tag(name, value)
+    end
+end
+
 --- Build manifest XML for a batch of photos
---- @param photos table Array of {path, previousIdentifier} tables
+--- @param photos table Array of {path, previousIdentifier, reuseIdentifier} tables
+--- @param album table|nil {identifier, name} target album
 --- @return string XML string
-local function buildManifestXML(photos)
+local function buildManifestXML(photos, album)
     local builder = LrXml.createXmlBuilder(false)
     builder:beginBlock('manifest')
+    if album then
+        builder:beginBlock('album')
+        optionalTag(builder, 'identifier', album.identifier)
+        builder:tag('name', album.name)
+        builder:endBlock()
+    end
     builder:beginBlock('photos')
     for _, photo in ipairs(photos) do
         builder:beginBlock('photo')
         builder:tag('path', photo.path)
-        if photo.previousIdentifier and photo.previousIdentifier ~= '' then
-            builder:tag('previousIdentifier', photo.previousIdentifier)
-        end
+        optionalTag(builder, 'previousIdentifier', photo.previousIdentifier)
+        optionalTag(builder, 'reuseIdentifier', photo.reuseIdentifier)
         builder:endBlock()
     end
     builder:endBlock()
@@ -206,17 +229,18 @@ end
 --- The trade-off is that we lose granular progress feedback (the progress bar
 --- can't update per-photo) in exchange for reliable imports.
 ---
---- @param photos table Array of {path, previousIdentifier} tables
---- @return table Result table with status, results keyed by path, or errorCode/errorMessage
-function M.importPhotos(photos)
-    if #photos == 0 then
+--- @param photos table Array of {path, previousIdentifier, reuseIdentifier} tables
+--- @param album table|nil {identifier, name} album to file the batch into
+--- @return table Result table with status, results keyed by path, album, or errorCode/errorMessage
+function M.importPhotos(photos, album)
+    if #photos == 0 and not album then
         return {
             status = STATUS_SUCCESS,
             results = {},
         }
     end
 
-    local manifestPath, writeErr = writeManifestFile(buildManifestXML(photos))
+    local manifestPath, writeErr = writeManifestFile(buildManifestXML(photos, album))
     if not manifestPath then
         return {
             status = STATUS_ERROR,
@@ -280,12 +304,106 @@ function M.deletePhotos(identifiers)
     return result
 end
 
+--- Run a single album operation through the helper.
+---
+--- Each of these comes from one action in the Publish Services panel, so a launch apiece is
+--- acceptable. Batch work rides along in the import manifest instead, to stay inside the
+--- single launch that publishing already costs.
+---
+--- @param label string Description used in the log
+--- @param arguments table Command arguments
+--- @return table Result table with status, identifier/created or errorCode/errorMessage
+local function runCollectionCommand(label, arguments)
+    local appPath = getAppPath()
+    logger:info('Launching ' .. label .. ' via Launch Services: ' .. appPath)
+
+    local launchStatus, output, diagnostics, termination = Shell.executeAppWithOutput(appPath, arguments)
+    if diagnostics and diagnostics ~= '' then
+        logger:info(label .. ' diagnostics:\n' .. diagnostics)
+    end
+    if output and output ~= '' then
+        logger:info(label .. ' output:\n' .. output)
+    end
+
+    local result = XML.parseCollectionResult(output or '')
+    checkProcessResult(result, launchStatus, output, diagnostics, termination)
+    return result
+end
+
+--- Find or create the album for a published collection.
+--- @param name string The collection's name, used as the album title
+--- @param identifier string|nil Album identifier recorded by a previous publish
+--- @return table Result table, with identifier and created on success
+function M.ensureAlbum(name, identifier)
+    local arguments = { 'album', 'ensure', '--name', name }
+    if identifier and identifier ~= '' then
+        table.insert(arguments, '--identifier')
+        table.insert(arguments, identifier)
+    end
+    return runCollectionCommand('album ensure', arguments)
+end
+
+--- Rename an album.
+function M.renameAlbum(identifier, name)
+    return runCollectionCommand('album rename',
+        { 'album', 'rename', '--identifier', identifier, '--name', name })
+end
+
+--- Delete an album, leaving its photos in the library.
+--- Raises the macOS confirmation dialog; a refusal returns USER_CANCELLED.
+function M.deleteAlbum(identifier)
+    return runCollectionCommand('album delete', { 'album', 'delete', '--identifier', identifier })
+end
+
+--- Remove photos from an album without deleting them. Silent, no dialog.
+function M.removeFromAlbum(identifier, assetIdentifiers)
+    if #assetIdentifiers == 0 then
+        return { status = STATUS_SUCCESS }
+    end
+
+    local arguments = { 'album', 'remove', '--identifier', identifier }
+    for _, assetIdentifier in ipairs(assetIdentifiers) do
+        table.insert(arguments, assetIdentifier)
+    end
+    return runCollectionCommand('album remove', arguments)
+end
+
+--- Set an album's photos to exactly the given set.
+--- The repair path for an album that was edited in Photos, and the backfill for one created
+--- for a collection whose photos were published before album sync existed.
+function M.syncAlbum(identifier, assetIdentifiers)
+    local arguments = { 'album', 'sync', '--identifier', identifier }
+    for _, assetIdentifier in ipairs(assetIdentifiers) do
+        table.insert(arguments, assetIdentifier)
+    end
+    return runCollectionCommand('album sync', arguments)
+end
+
 --- Whether a result describes a missing Photos library permission.
 --- @param result table A result table from importPhotos or deletePhotos
 --- @return boolean
 function M.isAuthorizationError(result)
     return result.status == STATUS_ERROR
         and AUTHORIZATION_ERROR_CODES[result.errorCode or ''] == true
+end
+
+--- Whether a result describes the user dismissing the confirmation dialog.
+--- @param result table A result table from any helper command
+--- @return boolean
+function M.isUserCancelled(result)
+    return result.status == STATUS_ERROR and result.errorCode == USER_CANCELLED
+end
+
+--- Whether a photo was kept back for an asset that has since been deleted in Photos.
+---
+--- The render is skipped for a photo whose asset is already current, so there is no file to
+--- import when that asset turns out to be gone. The run cannot recover, but the identifier
+--- that led nowhere can be dropped so the next one does.
+---
+--- @param result table A per-photo result from importPhotos
+--- @return boolean
+function M.isReuseMissing(result)
+    return result.status == STATUS_ERROR and result.errorCode == REUSE_MISSING
 end
 
 --- Status value indicating a successful operation
