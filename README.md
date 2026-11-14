@@ -27,10 +27,10 @@ This builds a universal binary (arm64 + x86_64) and installs the plugin to Light
 ## Usage
 
 1. In the **Publish Services** panel (bottom-left of Library module), click **Set Up** next to **Apple Photos**
-2. Configure settings and click **Save**
+2. Click **Save**
 3. Add photos to the publish collection, then click **Publish**
 
-When publishing, the plugin renders photos as full-quality JPEGs and imports them into Apple Photos in a single batch. The Apple Photos identifier for each photo is stored as plugin metadata in the Lightroom catalog.
+When publishing, the plugin renders photos as full-size, full-quality sRGB JPEGs with all metadata embedded and imports them into Apple Photos in a single batch. These output settings are fixed, so the dialog does not offer them. The Apple Photos identifier for each photo is stored as plugin metadata in the Lightroom catalog.
 
 When republishing, album memberships and favorite status in Apple Photos are preserved and the old version is replaced. Changes to title, caption, keywords, GPS, date, or rating will mark a photo for republish.
 

@@ -102,29 +102,46 @@ local provider = {}
 provider.canExportToTemporaryLocation = true
 --- Only incremental (change-tracked) publishing is supported.
 provider.supportsIncrementalPublish = 'only'
---- Hide irrelevant export dialog sections (location, naming, post-processing).
+--- Hide every export dialog section. Location, naming and post-processing are
+--- irrelevant, and the rest are fixed by FIXED_EXPORT_SETTINGS, so showing them
+--- would offer choices that never take effect.
 provider.hideSections = {
     'exportLocation',
     'fileNaming',
+    'fileSettings',
+    'imageSettings',
+    'outputSharpening',
+    'metadata',
+    'watermarking',
     'postProcessing',
 }
 --- Only JPEG output is supported.
 provider.allowFileFormats = { 'JPEG' }
---- Allow any color space (nil removes the restriction).
-provider.allowColorSpaces = nil
 
---- Called when the publish/export dialog opens.
---- Sets default export properties for Apple Photos output.
---- @param propertyTable table Lightroom export property table
-function provider.startDialog(propertyTable)
-    propertyTable.LR_jpeg_quality = 1
-    propertyTable.LR_size_doConstrain = false
-    propertyTable.LR_outputSharpeningOn = false
-    propertyTable.LR_includeFaceTagsInIptc = true
-    propertyTable.LR_metadata_keywordOptions = 'flat'
-    propertyTable.LR_embeddedMetadataOption = 'all'
-    propertyTable.LR_removeLocationMetadata = false
-    propertyTable.LR_useWatermark = false
+--- Output settings applied to every export and publish, whatever is saved.
+--- Metadata is embedded in full because Photos reads title, caption, keywords,
+--- location and date from the file.
+local FIXED_EXPORT_SETTINGS = {
+    LR_format = 'JPEG',
+    LR_jpeg_quality = 1,
+    LR_jpeg_useLimitSize = false,
+    LR_export_colorSpace = 'sRGB',
+    LR_size_doConstrain = false,
+    LR_outputSharpeningOn = false,
+    LR_includeFaceTagsInIptc = true,
+    LR_metadata_keywordOptions = 'flat',
+    LR_embeddedMetadataOption = 'all',
+    LR_removeLocationMetadata = false,
+    LR_useWatermark = false,
+}
+
+--- Called at the start of every export and publish, before rendering.
+--- Applies FIXED_EXPORT_SETTINGS over whatever the service has saved.
+--- @param exportSettings table Lightroom export settings for this session
+function provider.updateExportSettings(exportSettings)
+    for key, value in pairs(FIXED_EXPORT_SETTINGS) do
+        exportSettings[key] = value
+    end
 end
 
 --- Returns UI sections displayed at the top of the publish/export dialog.
