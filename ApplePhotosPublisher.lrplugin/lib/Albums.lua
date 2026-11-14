@@ -11,10 +11,16 @@
     Keying them on the identifier made every answer conditional on the collections already
     agreeing about the photo, so the moment two of them disagreed nothing could see the
     disagreement, let alone repair it. Assets.lua has the rest of that story.
+
+    They are also asked one format at a time. A photo has an asset for each format it is
+    published in, shared by every collection in that format, so "which collections publish
+    this photo" really means "which collections publish it as a JPEG". A photo's TIFF album
+    has no say over its JPEG, and the other way round.
 ]]
 
 local pluginLoad = require 'PluginModuleLoader'
 local Assets = pluginLoad 'lib/Assets'
+local Formats = pluginLoad 'lib/Formats'
 local Importer = pluginLoad 'lib/Importer'
 local logger = pluginLoad 'lib/Logger'
 
@@ -87,6 +93,8 @@ end
 --- between them. The helper only ever works on the system photo library, so two services
 --- really are two views of the same place.
 ---
+--- Each entry carries its collection's format, read once here rather than once per photo.
+---
 --- @param catalog LrCatalog The active catalog
 --- @return table Index with byPhoto, byAsset, collections and photos
 function M.buildIndex(catalog)
@@ -94,6 +102,7 @@ function M.buildIndex(catalog)
 
     for _, service in ipairs(catalog:getPublishServices(_PLUGIN.id)) do
         for _, collection in ipairs(M.allCollections(service)) do
+            local format = Formats.forCollection(collection)
             index.collections = index.collections + 1
             for _, publishedPhoto in ipairs(collection:getPublishedPhotos()) do
                 local photo = publishedPhoto:getPhoto()
@@ -111,6 +120,7 @@ function M.buildIndex(catalog)
                     publishedPhoto = publishedPhoto,
                     remoteId = remoteId,
                     photo = photo,
+                    format = format,
                 })
 
                 if remoteId and remoteId ~= '' then
@@ -141,7 +151,7 @@ end
 --- Every collection in the plugin that publishes this photo.
 --- @param index table An index from `buildIndex`
 --- @param photo LrPhoto
---- @return table Array of {collection, publishedPhoto, remoteId, photo}
+--- @return table Array of {collection, publishedPhoto, remoteId, photo, format}
 function M.entries(index, photo)
     if not index or not photo then
         return {}
@@ -162,13 +172,67 @@ function M.photoFor(index, remoteId)
     return holder and holder.photo or nil
 end
 
---- Whether any collection other than the given one still publishes this photo.
+--- The format of the asset a collection is naming for a photo.
+---
+--- Usually the collection's own. The exception is a collection whose format was changed
+--- after it published: it goes on naming the asset in the old format until the photo is
+--- published again, and that asset is the one its album still holds. An entry naming none of
+--- the photo's assets, because it has never been published or has drifted onto a copy of its
+--- own, says nothing either way and is taken at its collection's word.
+local function heldFormat(entry)
+    return Assets.formatOf(entry.photo, entry.remoteId) or entry.format
+end
+
+--- The collections naming an asset of this photo in a format.
 --- @param index table An index from `buildIndex`
 --- @param photo LrPhoto
+--- @param format string A format name
+--- @return table Array of index entries
+local function holders(index, photo, format)
+    local holding = {}
+    for _, entry in ipairs(M.entries(index, photo)) do
+        if heldFormat(entry) == format then
+            table.insert(holding, entry)
+        end
+    end
+    return holding
+end
+
+--- The format of an asset the catalog names for a photo.
+---
+--- A removal names an asset and nothing else, and what may be done with it depends on which
+--- of the photo's assets it is. The photo is asked first. An asset it does not have is one a
+--- collection drifted onto, so that collection's format is the best there is to go on.
+---
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @param remoteId string An Apple Photos identifier
+--- @return string A format name
+function M.formatOf(index, photo, remoteId)
+    local format = Assets.formatOf(photo, remoteId)
+    if format then
+        return format
+    end
+    for _, entry in ipairs(M.entries(index, photo)) do
+        if entry.remoteId == remoteId then
+            return entry.format
+        end
+    end
+    return Formats.DEFAULT
+end
+
+--- Whether any collection other than the given one still publishes this photo in a format.
+---
+--- Collections in other formats do not count. They publish the photo, but as a different
+--- asset, so they have no use for this one.
+---
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @param format string A format name
 --- @param excludeLocalId number|nil Local identifier of the collection to ignore
 --- @return boolean
-function M.isPublishedElsewhere(index, photo, excludeLocalId)
-    for _, entry in ipairs(M.entries(index, photo)) do
+function M.isPublishedElsewhere(index, photo, format, excludeLocalId)
+    for _, entry in ipairs(holders(index, photo, format)) do
         if entry.collection.localIdentifier ~= excludeLocalId then
             return true
         end
@@ -176,7 +240,7 @@ function M.isPublishedElsewhere(index, photo, excludeLocalId)
     return false
 end
 
---- The asset the plugin last knew this photo by.
+--- The asset the plugin last knew this photo by in a format.
 ---
 --- The identifier on the photo, falling back to whatever its collections hold. A publish
 --- records the collection before the photo, so that is the one direction in which the two can
@@ -186,13 +250,14 @@ end
 ---
 --- @param index table An index from `buildIndex`
 --- @param photo LrPhoto
+--- @param format string A format name
 --- @return string|nil
-function M.lastKnownAsset(index, photo)
-    local identifier = Assets.identifier(photo)
+function M.lastKnownAsset(index, photo, format)
+    local identifier = Assets.identifier(photo, format)
     if identifier then
         return identifier
     end
-    for _, entry in ipairs(M.entries(index, photo)) do
+    for _, entry in ipairs(holders(index, photo, format)) do
         if entry.remoteId and entry.remoteId ~= '' then
             return entry.remoteId
         end
@@ -200,7 +265,7 @@ function M.lastKnownAsset(index, photo)
     return nil
 end
 
---- Whether the asset this photo has can be published as it stands.
+--- Whether the asset this photo has in a format can be published as it stands.
 ---
 --- A photo joining another collection does not need a new asset: the one it already has is
 --- current, and replacing it costs a render, an import and a delete to arrive back where it
@@ -209,32 +274,41 @@ end
 --- identifier on itself gets a fresh asset, since nothing says that identifier predates the
 --- last edit.
 ---
+--- Only collections in the format are asked. An edit flags the photo in every collection, so
+--- theirs are the flags that speak for this asset, and a collection in another format still
+--- waiting to publish says nothing about it.
+---
 --- @param index table An index from `buildIndex`
 --- @param photo LrPhoto
+--- @param format string A format name
 --- @return boolean
-function M.assetIsCurrent(index, photo)
-    local entries = M.entries(index, photo)
-    if #entries == 0 then
-        return false
-    end
-    for _, entry in ipairs(entries) do
-        if entry.publishedPhoto:getEditedFlag() then
-            -- A collection is waiting to republish this photo, so its asset is stale.
-            return false
+function M.assetIsCurrent(index, photo, format)
+    local vouched = false
+    for _, entry in ipairs(holders(index, photo, format)) do
+        -- A collection that has since changed format is flagged to move its photos across,
+        -- which is not a claim that this asset is out of date. One still waiting for its
+        -- first publish has never held an asset to speak for.
+        if entry.format == format and entry.remoteId and entry.remoteId ~= '' then
+            if entry.publishedPhoto:getEditedFlag() then
+                -- A collection is waiting to republish this photo, so its asset is stale.
+                return false
+            end
+            vouched = true
         end
     end
-    return true
+    return vouched
 end
 
---- The collections holding an identifier other than the one the photo now has.
+--- The collections holding an identifier other than the one the photo now has in a format.
 --- @param index table An index from `buildIndex`
 --- @param photo LrPhoto
+--- @param format string A format name
 --- @param identifier string The asset the photo now has
 --- @param excludeLocalId number|nil Collection Lightroom has already updated itself
 --- @return table Array of index entries
-function M.staleEntries(index, photo, identifier, excludeLocalId)
+function M.staleEntries(index, photo, format, identifier, excludeLocalId)
     local stale = {}
-    for _, entry in ipairs(M.entries(index, photo)) do
+    for _, entry in ipairs(holders(index, photo, format)) do
         if entry.collection.localIdentifier ~= excludeLocalId
             and entry.remoteId ~= identifier then
             table.insert(stale, entry)
@@ -243,7 +317,26 @@ function M.staleEntries(index, photo, identifier, excludeLocalId)
     return stale
 end
 
---- Every asset the plugin holds for this photo apart from the one it now has.
+--- A re-point of one stale entry at the asset its photo now has.
+--- @param entry table An index entry from `staleEntries`
+--- @param format string The format the asset is in
+--- @param identifier string The asset the photo now has
+--- @param url string|nil A deep link to it
+--- @return table {publishedPhoto, identifier, url, name, pending}
+function M.repoint(entry, format, identifier, url)
+    return {
+        publishedPhoto = entry.publishedPhoto,
+        identifier = identifier,
+        url = url,
+        name = entry.collection:getName(),
+        -- A collection that has since changed format still has to publish the photo in its
+        -- own. It is told where the asset went, so it can let go of the right one when it
+        -- does, but it is not up to date.
+        pending = entry.format ~= format,
+    }
+end
+
+--- Every asset the plugin holds for this photo in a format, apart from the one it now has.
 ---
 --- Both the identifier on the photo and the identifiers on its collections are read, so a
 --- publish clears up assets left by a collection that had drifted onto its own copy as well
@@ -251,9 +344,10 @@ end
 ---
 --- @param index table An index from `buildIndex`
 --- @param photo LrPhoto
+--- @param format string A format name
 --- @param identifier string|nil The asset the photo now has, which is kept
 --- @return table Array of Apple Photos identifiers
-function M.supersededAssets(index, photo, identifier)
+function M.supersededAssets(index, photo, format, identifier)
     local superseded = {}
     local seen = {}
 
@@ -277,12 +371,62 @@ function M.supersededAssets(index, photo, identifier)
         table.insert(superseded, remoteId)
     end
 
-    consider(Assets.identifier(photo))
-    for _, entry in ipairs(M.entries(index, photo)) do
+    consider(Assets.identifier(photo, format))
+    for _, entry in ipairs(holders(index, photo, format)) do
         consider(entry.remoteId)
     end
 
     return superseded
+end
+
+--- The asset in another format that a collection is still naming for a photo.
+---
+--- Changing a collection's format leaves it naming what it published in the old one. When
+--- the photo is published again the collection moves onto the asset in its new format, and
+--- this is the one it leaves behind: still in its album, and possibly published by nothing
+--- else.
+---
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @param format string The format the collection has now
+--- @param localCollectionId number|nil Local identifier of the collection
+--- @return string|nil The identifier it is naming
+--- @return string|nil The format that asset is in
+function M.outgoingAsset(index, photo, format, localCollectionId)
+    for _, entry in ipairs(M.entries(index, photo)) do
+        if entry.collection.localIdentifier == localCollectionId then
+            local held = heldFormat(entry)
+            if held ~= format then
+                return entry.remoteId, held
+            end
+        end
+    end
+    return nil, nil
+end
+
+--- The asset a newly rendered one takes over from.
+---
+--- The helper copies album memberships and favorite status off it. That is the photo's asset
+--- in the same format when it has one. A collection that changed format has only the asset
+--- from the old one to offer, and it is offered when this publish is about to delete it, so
+--- that an album the user filed it in by hand still has the photo afterwards. One that other
+--- collections go on publishing keeps its place instead, and the new asset starts clean.
+---
+--- @param index table An index from `buildIndex`
+--- @param photo LrPhoto
+--- @param format string The format being published
+--- @param localCollectionId number|nil Local identifier of the collection being published
+--- @return string|nil
+function M.predecessor(index, photo, format, localCollectionId)
+    local identifier = M.lastKnownAsset(index, photo, format)
+    if identifier then
+        return identifier
+    end
+    local outgoing, outgoingFormat = M.outgoingAsset(index, photo, format, localCollectionId)
+    if outgoingFormat and not M.isPublishedElsewhere(index, photo, outgoingFormat, localCollectionId) then
+        return outgoing
+    end
+    return nil
 end
 
 --- Point collections at the asset their photo now has.
@@ -292,7 +436,7 @@ end
 --- would then fail, and republishing it would restore no album memberships.
 ---
 --- @param catalog LrCatalog The active catalog
---- @param repoints table Array of {publishedPhoto, identifier, url, name}
+--- @param repoints table Array of {publishedPhoto, identifier, url, name, pending}
 --- @return number How many collections were updated
 function M.syncIdentifiers(catalog, repoints)
     if #repoints == 0 then
@@ -316,7 +460,9 @@ function M.syncIdentifiers(catalog, repoints)
             -- albums already hold it because membership was restored onto it. They are
             -- current, so clear the flag the replacement set on the photo rather than
             -- leaving them asking to republish work that is already done.
-            repoint.publishedPhoto:setEditedFlag(false)
+            if not repoint.pending then
+                repoint.publishedPhoto:setEditedFlag(false)
+            end
         end
     end)
 
@@ -368,6 +514,9 @@ end
 --- another. Those copies are deleted for the same reason publishing deletes them: nothing
 --- publishes them any more, so nothing would ever be able to name them again.
 ---
+--- All of it happens in the collection's own format. The assets its photos have in other
+--- formats belong to other albums and are left alone.
+---
 --- @param collection LrPublishedCollection The collection to reconcile
 --- @return table Result from the helper, plus skipped, adopted, repointed and deleted
 function M.reconcile(collection)
@@ -379,6 +528,7 @@ function M.reconcile(collection)
 
     local name = collection:getName()
     local catalog = collection.catalog
+    local format = Formats.forCollection(collection)
     local index = M.buildIndex(catalog)
 
     local identifiers = {}
@@ -390,24 +540,28 @@ function M.reconcile(collection)
     for _, publishedPhoto in ipairs(collection:getPublishedPhotos()) do
         local photo = publishedPhoto:getPhoto()
         local rowId = publishedPhoto:getRemoteId()
-        local identifier = Assets.identifier(photo)
+        local identifier = Assets.identifier(photo, format)
 
         if not identifier and rowId and rowId ~= '' then
-            -- Published before the asset moved onto the photo, so adopt what the row holds.
-            identifier = rowId
-            table.insert(adoptions, { photo = photo, identifier = identifier })
+            if Assets.formatOf(photo, rowId) then
+                -- The collection changed format and this photo has not been published since.
+                -- What the row names is the photo's asset in the old format, which is not
+                -- one to adopt as its asset in this one. The album keeps it until a publish
+                -- brings the replacement, rather than losing the photo in the meantime.
+                table.insert(identifiers, rowId)
+            else
+                -- Published before the asset moved onto the photo, so adopt what the row holds.
+                identifier = rowId
+                table.insert(adoptions, { photo = photo, identifier = identifier, format = format })
+            end
         end
 
         if identifier then
             table.insert(identifiers, identifier)
-            for _, entry in ipairs(M.staleEntries(index, photo, identifier, nil)) do
-                table.insert(repoints, {
-                    publishedPhoto = entry.publishedPhoto,
-                    identifier = identifier,
-                    name = entry.collection:getName(),
-                })
+            for _, entry in ipairs(M.staleEntries(index, photo, format, identifier, nil)) do
+                table.insert(repoints, M.repoint(entry, format, identifier))
             end
-            for _, remoteId in ipairs(M.supersededAssets(index, photo, identifier)) do
+            for _, remoteId in ipairs(M.supersededAssets(index, photo, format, identifier)) do
                 if not seen[remoteId] then
                     seen[remoteId] = true
                     table.insert(superseded, remoteId)
@@ -460,6 +614,47 @@ function M.reconcile(collection)
     end
 
     return result
+end
+
+--- Flag the photos a collection published in a format it no longer has.
+---
+--- Lightroom only offers a photo for publishing when it is new or flagged as edited, and
+--- changing a collection's format makes it neither. Flagging them is what makes Publish the
+--- way to move the album across, rather than leaving it in the old format until each photo
+--- happens to be edited.
+---
+--- Only photos naming an asset in some other format are flagged, so saving a collection's
+--- settings without changing the format flags nothing, however often it happens.
+---
+--- @param collection LrPublishedCollection The collection whose settings were saved
+--- @param format string The format it has now
+--- @return number How many photos were flagged
+function M.flagForFormat(collection, format)
+    local pending = {}
+    for _, publishedPhoto in ipairs(collection:getPublishedPhotos()) do
+        if not publishedPhoto:getEditedFlag() then
+            local held = Assets.formatOf(publishedPhoto:getPhoto(), publishedPhoto:getRemoteId())
+            if held and held ~= format then
+                table.insert(pending, publishedPhoto)
+            end
+        end
+    end
+    if #pending == 0 then
+        return 0
+    end
+
+    -- With a timeout, because Lightroom may still be inside the transaction that saved the
+    -- settings, and without one a busy catalog is an error rather than a wait.
+    local outcome = collection.catalog:withWriteAccessDo('Mark to Republish', function()
+        for _, publishedPhoto in ipairs(pending) do
+            publishedPhoto:setEditedFlag(true)
+        end
+    end, { timeout = 30 })
+    if outcome == 'aborted' then
+        error('the catalog stayed busy', 0)
+    end
+
+    return #pending
 end
 
 return M

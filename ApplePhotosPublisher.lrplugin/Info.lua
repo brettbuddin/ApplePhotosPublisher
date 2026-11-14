@@ -5,9 +5,10 @@
     to Apple Photos, preserving album memberships and favorite status on
     republish.
 
-    Photos are rendered as full-quality JPEGs and imported into Apple Photos
-    via the bundled lrphotosimporter binary. The Apple Photos identifier for
-    each photo is stored as plugin metadata in the Lightroom catalog.
+    Photos are rendered as full-quality JPEGs, or as JPEG XL or TIFF for the
+    albums that ask for them, and imported into Apple Photos via the bundled
+    lrphotosimporter binary. The Apple Photos identifier a photo has in each
+    format is stored as plugin metadata in the Lightroom catalog.
 
     Author: Brett Buddin <brett@buddin.org>
     Version: 1.1.1

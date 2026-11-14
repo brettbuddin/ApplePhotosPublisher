@@ -30,7 +30,7 @@ This builds a universal binary (arm64 + x86_64) and installs the plugin to Light
 2. Click **Save**
 3. Add photos to the publish collection, then click **Publish**
 
-When publishing, the plugin renders photos as full-size, full-quality sRGB JPEGs with all metadata embedded and imports them into Apple Photos in a single batch. These output settings are fixed, so the dialog does not offer them. The Apple Photos identifier for each photo is stored as plugin metadata in the Lightroom catalog.
+When publishing, the plugin renders photos at full size with all metadata embedded and imports them into Apple Photos in a single batch. They are full-quality sRGB JPEGs unless an album asks for another [format](#output-formats). Everything else about the output is fixed, so the dialog does not offer it. The Apple Photos identifier for each photo is stored as plugin metadata in the Lightroom catalog.
 
 When republishing, album memberships and favorite status in Apple Photos are preserved and the old version is replaced. Changes to title, caption, keywords, GPS, date, or rating will mark a photo for republish.
 
@@ -42,9 +42,25 @@ The built-in **Apple Photos** collection is the exception and gets no album. Pub
 
 Renaming a collection renames its album. Deleting one deletes the album but keeps the photos, unless no other collection still publishes them.
 
-A photo added to a second collection keeps the asset it already has rather than being imported again, so both albums show the same photo and neither collection is left pointing at a replaced version.
+A photo added to a second collection keeps the asset it already has rather than being imported again, so both albums show the same photo and neither collection is left pointing at a replaced version. That holds for albums in the same [output format](#output-formats).
 
 Album deletion goes through the same macOS confirmation dialog as photo deletion, so deleting a collection asks before changing anything in Photos. Declining leaves Photos untouched and Lightroom offers to undo the change.
+
+### Output Formats
+
+Each album publishes in one format. Choose it when you create the album, or change it later by editing the album in the Publish Services panel.
+
+- JPEG, the default: full quality, sRGB.
+- JPEG XL: full quality, 16-bit, sRGB. Needs Lightroom Classic 13 or later to render it and macOS 14 or later for Photos to read it.
+- TIFF: 16-bit, ZIP compressed, sRGB. Lossless and much larger.
+
+A photo is rendered and imported once for each format it is published in, however many albums that is. The same photo in three JPEG albums is one copy in Photos, filed in three albums. Albums in different formats cannot share a copy, because the file is the copy: a photo in a JPEG album and a TIFF album is in your library twice, once in each format, and each album shows its own.
+
+Republishing an edited photo from one album updates every album in the same format. Albums in the other format go on waiting, since theirs is a different file that still has to be rendered.
+
+Changing an album's format marks the photos already published there to be published again. Click **Publish** and the album moves across. Photos another album already publishes in the new format are filed without being rendered, and the rest are rendered once. The copy in the old format leaves the album, and is deleted from Photos if no other album still publishes it.
+
+Lightroom may ask to update the catalog the first time this version loads. The plugin records an identifier per format for each photo where it used to record one, and existing photos are untouched.
 
 ### Reconciling Albums
 
@@ -54,7 +70,7 @@ Lightroom only reports what changed, so an album can drift out of step with its 
 
 ### Removing Photos
 
-Removing a photo from a collection takes it out of that collection's album. The photo is only deleted from Apple Photos once no collection in the service still publishes it, so moving a photo between albums never destroys it.
+Removing a photo from a collection takes it out of that collection's album. The photo is only deleted from Apple Photos once no collection in the service still publishes it, so moving a photo between albums never destroys it. With more than one [output format](#output-formats) in play this is decided per format: taking a photo out of its last TIFF album deletes the TIFF, whatever JPEG albums it is still in, and their copy is unaffected.
 
 That gives two outcomes worth knowing. A photo published only through a collection, removed from it, is deleted from Apple Photos. The same photo also in the **Apple Photos** collection is kept instead, and simply becomes an unfiled photo in your library.
 

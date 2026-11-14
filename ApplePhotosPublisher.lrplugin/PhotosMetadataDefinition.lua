@@ -6,8 +6,14 @@
     replacing the external SQLite database approach.
 
     Fields:
-      - photosLocalIdentifier: The Apple Photos localIdentifier for this photo
+      - photosLocalIdentifier: The Apple Photos localIdentifier for this photo's JPEG
+      - photosLocalIdentifierJXL: The Apple Photos localIdentifier for this photo's JPEG XL
+      - photosLocalIdentifierTIFF: The Apple Photos localIdentifier for this photo's TIFF
       - photosSyncDate: When this photo was last synced to Apple Photos
+
+    A photo has one asset per output format, so there is an identifier field for each
+    format in lib/Formats.lua. Adding a field means raising schemaVersion, which makes
+    Lightroom offer to update the catalog the next time the plugin loads.
 ]]
 
 return {
@@ -20,6 +26,20 @@ return {
             browsable = true,
         },
         {
+            id = 'photosLocalIdentifierJXL',
+            title = 'Photos Identifier (JPEG XL)',
+            dataType = 'string',
+            searchable = true,
+            browsable = true,
+        },
+        {
+            id = 'photosLocalIdentifierTIFF',
+            title = 'Photos Identifier (TIFF)',
+            dataType = 'string',
+            searchable = true,
+            browsable = true,
+        },
+        {
             id = 'photosSyncDate',
             title = 'Photos Sync Date',
             dataType = 'string',
@@ -27,5 +47,5 @@ return {
             browsable = true,
         },
     },
-    schemaVersion = 1,
+    schemaVersion = 2,
 }

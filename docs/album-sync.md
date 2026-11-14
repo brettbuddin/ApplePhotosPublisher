@@ -54,7 +54,7 @@ doubles as the repair path for drift after the user edits an album in Photos.
 | --- | --- | --- |
 | Published collection | User album (`PHAssetCollectionTypeAlbum` / `AlbumRegular`) | collection `remoteId` |
 | Default collection | nothing; the photo is in the library, unfiled | n/a |
-| Photo | Asset | `photosLocalIdentifier` on the photo |
+| Photo | Asset, one per output format | `photosLocalIdentifier` on the photo, and one more per format |
 | Published photo | the same asset | published photo `remoteId`, kept in step |
 
 Album and folder identifiers are PhotoKit `localIdentifier` values. They are recorded with
@@ -62,6 +62,11 @@ Album and folder identifiers are PhotoKit `localIdentifier` values. They are rec
 `publishedCollectionInfo.remoteId` and the `info.remoteId` of each lifecycle callback.
 
 ## One asset per photo
+
+Since [output formats](output-formats.md), read "asset" in this section as "asset in a
+format". A photo has one for each format it is published in and collections that share a
+format share it. Everything below holds within a format, and that document has what changes
+when two collections publish the same photo in different ones.
 
 A photo has one asset in Photos, recorded on the photo as `photosLocalIdentifier`. Lightroom
 also keeps a `remoteId` per published photo per collection, which cannot be avoided: the
@@ -103,6 +108,10 @@ Reuse skips the render on the strength of an identifier. If that asset was delet
 the meantime, there is no file to fall back to, so the helper reports `REUSE_MISSING`, the photo
 fails, and the plugin forgets the identifier. The next publish renders and imports it. This is
 reachable by deleting a photo in Photos and then adding it to another collection in Lightroom.
+
+Reuse reads the identifier from the photo alone for this reason. The collection that first
+published the photo goes on naming the deleted asset, so falling back to what the collections
+hold would offer it again on every publish after the first.
 
 ## Lightroom side
 

@@ -97,7 +97,9 @@ Use `authorize --check-library` to also validate the Photos service connection w
 
 Test the Lua launch/capture behavior with `lua tests/launch-tests.lua`. These tests simulate the launcher and do not access Photos. After building a release, use `lua tests/launch-tests.lua --integration` to also exercise Launch Services with the built helper and an empty import manifest.
 
-Test the mapping between Lightroom's published photos and Photos assets with `lua tests/album-tests.lua`. These stand in for the SDK objects, so they need neither Lightroom nor Photos, and they cover the parts that decide which asset a photo has, which collections have to be told about a replacement and which assets are left over to delete.
+Test the mapping between Lightroom's published photos and Photos assets with `lua tests/album-tests.lua`. These stand in for the SDK objects, so they need neither Lightroom nor Photos, and they cover the parts that decide which asset a photo has in each output format, which collections have to be told about a replacement and which assets are left over to delete.
+
+Test the publish service end to end with `lua tests/publish-tests.lua`. It runs the real provider against stand-ins for Lightroom's export pipeline and for the helper, which keeps a small Photos library of its own, so the assertions are about what a publish leaves in Photos: how many times a photo was rendered and by whom, how many assets it has and what each album holds. This is where the clustering by output format is pinned down. See [docs/output-formats.md](docs/output-formats.md).
 
 Run `python3 tests/monitor-tests.py <path-to-lrphotoslauncher>` to test real Launch Services launches, exit codes, fatal signals, crashes after XML, startup failures, and repeated fast commands. The test builds a disposable app with the production handshake code and never accesses Photos. `swift test` also checks wait-status decoding and failure when the launcher never acknowledges.
 
